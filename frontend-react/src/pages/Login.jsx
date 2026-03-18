@@ -1,5 +1,4 @@
 import { useState } from 'react';
-import { Link } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import toast from 'react-hot-toast';
 
@@ -31,7 +30,7 @@ export default function Login() {
       <div className="relative z-10 w-full max-w-sm px-4">
         <div className="bg-surface border border-border relative top-line animate-fade-in card-glow">
           <div className="p-10">
-            <p className="font-mono text-green text-xs tracking-widest uppercase mb-2">// baileys-api v1.0</p>
+            <p className="font-mono text-green text-xs tracking-widest uppercase mb-2">// wahaGI v1.0</p>
             <h1 className="font-mono text-2xl font-semibold text-white mb-8">Sign In</h1>
 
             <form onSubmit={handleSubmit} className="space-y-5">
@@ -67,8 +66,7 @@ export default function Login() {
             </form>
 
             <p className="font-mono text-xs text-muted text-center mt-6">
-              No account?{' '}
-              <Link to="/register" className="text-green hover:underline">Register</Link>
+              Contact administrator to create an account
             </p>
           </div>
         </div>

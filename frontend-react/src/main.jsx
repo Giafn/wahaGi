@@ -4,7 +4,6 @@ import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import { Toaster } from 'react-hot-toast';
 import { AuthProvider, useAuth } from './context/AuthContext';
 import Login from './pages/Login';
-import Register from './pages/Register';
 import Dashboard from './pages/Dashboard';
 import DeviceDetail from './pages/DeviceDetail';
 import MediaPool from './pages/MediaPool';
@@ -32,7 +31,6 @@ function App() {
       <BrowserRouter>
         <Routes>
           <Route path="/" element={<PublicRoute><Login /></PublicRoute>} />
-          <Route path="/register" element={<PublicRoute><Register /></PublicRoute>} />
           <Route path="/dashboard" element={<PrivateRoute><Dashboard /></PrivateRoute>} />
           <Route path="/device/:id" element={<PrivateRoute><DeviceDetail /></PrivateRoute>} />
           <Route path="/media" element={<PrivateRoute><MediaPool /></PrivateRoute>} />

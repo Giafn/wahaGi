@@ -1,4 +1,4 @@
-# Baileys API — Multi-Tenant WhatsApp Gateway
+# wahaGI — Multi-Tenant WhatsApp Gateway
 
 REST API berbasis [Baileys](https://github.com/WhiskeySockets/Baileys) untuk multi-device dan multi-tenant WhatsApp, lengkap dengan admin panel React.
 
@@ -20,11 +20,11 @@ REST API berbasis [Baileys](https://github.com/WhiskeySockets/Baileys) untuk mul
 
 ```bash
 # 1. Clone & masuk folder
-git clone <repo> baileys-api && cd baileys-api
+git clone <repo> wahaGI && cd wahaGI
 
 # 2. Copy env
 cp .env.example .env
-# Edit .env — ubah JWT_SECRET, POSTGRES_PASSWORD, ADMIN_PASSWORD
+# Edit .env — ubah DATABASE_URL, JWT_SECRET, ADMIN_PASSWORD
 
 # 3. Build frontend React dulu
 cd frontend-react
@@ -40,6 +40,146 @@ docker compose logs -f api
 ```
 
 Buka: http://localhost:3000
+
+---
+
+## Deployment dengan Podman
+
+Podman adalah alternatif Docker yang daemonless dan lebih aman (rootless by default).
+
+### 1. Persiapan Environment
+
+```bash
+# Copy dan edit .env
+cp .env.example .env
+nano .env
+
+# Pastikan DATABASE_URL mengarah ke PostgreSQL eksternal
+DATABASE_URL="postgresql://postgres:password@your-db-host:5432/baileys_api"
+JWT_SECRET="your-super-secret-key"
+ADMIN_PASSWORD="secure-password"
+```
+
+### 2. Build Frontend
+
+```bash
+cd frontend-react
+npm install
+npm run build
+cd ..
+```
+
+### 3. Build Image Podman
+
+```bash
+podman build -t baileys-api:latest .
+```
+
+### 4. Jalankan Container
+
+**Opsi A: Menggunakan podman run**
+
+```bash
+# Buat volume untuk persistensi data
+podman volume create baileys-media
+podman volume create baileys-auth
+
+# Jalankan container
+podman run -d \
+  --name baileys-api \
+  -p 3000:3000 \
+  -e DATABASE_URL="postgresql://postgres:password@your-db-host:5432/baileys_api" \
+  -e JWT_SECRET="your-super-secret-key" \
+  -e ADMIN_PASSWORD="secure-password" \
+  -e MEDIA_DIR=/data/media \
+  -e AUTH_DIR=/data/auth \
+  -v baileys-media:/data/media \
+  -v baileys-auth:/data/auth \
+  --restart=always \
+  baileys-api:latest
+```
+
+**Opsi B: Menggunakan Podman Compose (direkomendasikan)**
+
+```bash
+# Install podman-compose jika belum
+pip install podman-compose
+
+# Jalankan dengan compose
+podman-compose up -d
+
+# Lihat log
+podman-compose logs -f api
+```
+
+### 5. Auto-start dengan Systemd
+
+Podman dapat generate systemd unit file untuk auto-start:
+
+```bash
+# Generate systemd service
+podman generate systemd --new --name baileys-api > ~/.config/systemd/user/podman-baileys-api.service
+
+# Reload systemd
+systemctl --user daemon-reload
+
+# Enable dan start
+systemctl --user enable podman-baileys-api.service
+systemctl --user start podman-baileys-api.service
+
+# Cek status
+systemctl --user status podman-baileys-api.service
+```
+
+### 6. Enable Lingering (Agar Tetap Jalan Setelah Logout)
+
+```bash
+# Untuk user saat ini
+loginctl enable-linger $(whoami)
+```
+
+### 7. Update Container
+
+```bash
+# Pull image baru
+podman pull baileys-api:latest
+
+# Stop dan remove container lama
+podman stop baileys-api && podman rm baileys-api
+
+# Jalankan ulang dengan image baru
+podman-compose up -d
+```
+
+### 8. Backup Data
+
+```bash
+# Backup volume media dan auth
+podman run --rm \
+  -v baileys-media:/source:ro \
+  -v $(pwd):/backup \
+  alpine tar czf /backup/media-backup-$(date +%Y%m%d).tar.gz -C /source .
+
+podman run --rm \
+  -v baileys-auth:/source:ro \
+  -v $(pwd):/backup \
+  alpine tar czf /backup/auth-backup-$(date +%Y%m%d).tar.gz -C /source .
+```
+
+---
+
+## Perbedaan Docker vs Podman
+
+| Feature | Docker | Podman |
+|---------|--------|--------|
+| Daemon | Required | Daemonless |
+| Root required | Yes (default) | Rootless |
+| Compose | `docker compose` | `podman-compose` |
+| Systemd integration | Manual | Built-in (`podman generate systemd`) |
+| Security | Good | Better (SELinux support) |
+| Registry login | `docker login` | `podman login` |
+
+> **Note:** `docker-compose.yml` kompatibel dengan `podman-compose`. Cukup ganti perintah `docker compose` dengan `podman-compose`.
 
 ---
 
@@ -80,14 +220,24 @@ npm run dev
 | Method | Path | Description |
 |--------|------|-------------|
 | POST | `/auth/login` | Login, returns JWT |
-| POST | `/auth/register` | Register new user |
 | GET | `/auth/me` | Get current user |
+
+> **Note:** Registration is disabled by default for security. Create users manually via script.
 
 **Login:**
 ```bash
-curl -X POST http://localhost:3000/auth/login \
+curl -X POST http://localhost:3021/auth/login \
   -H "Content-Type: application/json" \
   -d '{"username":"admin","password":"changeme123"}'
+```
+
+**Create User (Manual):**
+```bash
+# Via npm script
+npm run create-user -- newuser securepassword
+
+# Or directly
+node scripts/create-user.js newuser securepassword
 ```
 
 ### Sessions (Device)
@@ -255,10 +405,10 @@ Set webhook URL di `/sessions/:id/webhook`, lalu semua event akan di-POST ke URL
 
 ## Stack
 
-- **Runtime**: Node.js 22
+- **Runtime**: Node.js 20+
 - **Framework**: Fastify 4
 - **WA Library**: @whiskeysockets/baileys
-- **ORM**: Prisma + PostgreSQL
+- **ORM**: Prisma + PostgreSQL (eksternal)
 - **Auth**: JWT
 - **Frontend**: React 18 + Tailwind CSS + Vite
-- **Deploy**: Docker / Podman
+- **Deploy**: Docker / Podman (rootless)

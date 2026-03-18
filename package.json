@@ -1,5 +1,5 @@
 {
-  "name": "baileys-api",
+  "name": "wahaGI",
   "version": "1.0.0",
   "description": "Multi-tenant WhatsApp API wrapper using Baileys",
   "type": "module",
@@ -11,6 +11,7 @@
     "db:generate": "npx prisma generate",
     "db:push": "npx prisma db push",
     "db:studio": "npx prisma studio",
+    "create-user": "node scripts/create-user.js",
     "test": "node --test test/**/*.test.js",
     "test:watch": "node --test --watch test/**/*.test.js"
   },

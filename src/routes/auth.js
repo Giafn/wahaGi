@@ -57,7 +57,9 @@ export async function authRoutes(fastify) {
     return { token, user: { id: user.id, username: user.username } };
   });
 
-  // POST /auth/register
+  // POST /auth/register - DISABLED for security
+  // Uncomment below to enable self-registration
+  /*
   fastify.post('/register', {
     schema: {
       tags: ['Auth'],
@@ -123,6 +125,7 @@ export async function authRoutes(fastify) {
 
     return reply.code(201).send({ token, user });
   });
+  */
 
   // GET /auth/me
   fastify.get('/me', {

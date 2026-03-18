@@ -23,7 +23,7 @@ export default function Layout({ children, title, subtitle, actions }) {
         <div className="px-5 py-5 border-b border-border">
           <div className="flex items-center gap-2">
             <Activity size={16} className="text-green" />
-            <span className="font-mono text-sm font-semibold text-white">baileys-api</span>
+            <span className="font-mono text-sm font-semibold text-white">wahaGI</span>
           </div>
           <p className="font-mono text-xs text-muted mt-1">v1.0.0</p>
         </div>

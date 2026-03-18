@@ -1,4 +1,5 @@
-const BASE = '';
+// Use VITE_API_BASE_URL from .env file, or empty string for same-origin
+const BASE = import.meta.env.VITE_API_BASE_URL || '';
 
 function getToken() {
   return localStorage.getItem('token');
@@ -10,10 +11,13 @@ async function request(method, path, body, isFormData = false) {
   if (token) headers['Authorization'] = `Bearer ${token}`;
   if (!isFormData) headers['Content-Type'] = 'application/json';
 
+  // Don't send body for GET/DELETE, or if body is empty object
+  const sendBody = body && Object.keys(body).length > 0;
+
   const res = await fetch(`${BASE}${path}`, {
     method,
     headers,
-    body: isFormData ? body : body ? JSON.stringify(body) : undefined,
+    body: sendBody ? (isFormData ? body : JSON.stringify(body)) : undefined,
   });
 
   if (res.status === 401) {
@@ -31,7 +35,6 @@ async function request(method, path, body, isFormData = false) {
 export const api = {
   // Auth
   login: (username, password) => request('POST', '/auth/login', { username, password }),
-  register: (username, password) => request('POST', '/auth/register', { username, password }),
   me: () => request('GET', '/auth/me'),
 
   // Sessions
@@ -41,7 +44,7 @@ export const api = {
   deleteSession: (id) => request('DELETE', `/sessions/${id}`),
   getQR: (id) => request('GET', `/sessions/${id}/qr`),
   setWebhook: (id, url) => request('POST', `/sessions/${id}/webhook`, { url }),
-  restartSession: (id) => request('POST', `/sessions/${id}/restart`),
+  restartSession: (id) => request('POST', `/sessions/${id}/restart`, {}),
   setStatus: (id, text) => request('POST', `/sessions/${id}/status`, { text }),
 
   // Messages

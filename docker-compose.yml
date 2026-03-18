@@ -1,28 +1,15 @@
 version: '3.9'
 
 services:
-  postgres:
-    image: postgres:16-alpine
-    restart: unless-stopped
-    environment:
-      POSTGRES_DB: baileys_api
-      POSTGRES_USER: postgres
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-changeme}
-    volumes:
-      - postgres_data:/var/lib/postgresql/data
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U postgres"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-
   api:
+    container_name: wahagi-api
     build: .
     restart: unless-stopped
     ports:
-      - "${PORT:-3000}:3000"
+      - "${PORT:-3021}:3000"
     environment:
-      DATABASE_URL: postgresql://postgres:${POSTGRES_PASSWORD:-changeme}@postgres:5432/baileys_api
+      # External PostgreSQL connection (update with your actual credentials)
+      DATABASE_URL: ${DATABASE_URL:-postgresql://postgres:changeme@your-db-host:5432/wahagi}
       JWT_SECRET: ${JWT_SECRET:-change-this-secret-in-production}
       JWT_EXPIRY: ${JWT_EXPIRY:-7d}
       PORT: 3000
@@ -39,13 +26,9 @@ services:
     volumes:
       - media_data:/data/media
       - auth_data:/data/auth
-    depends_on:
-      postgres:
-        condition: service_healthy
     command: >
       sh -c "npx prisma migrate deploy && node src/index.js"
 
 volumes:
-  postgres_data:
   media_data:
   auth_data:
