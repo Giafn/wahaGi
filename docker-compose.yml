@@ -1,0 +1,51 @@
+version: '3.9'
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: baileys_api
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-changeme}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  api:
+    build: .
+    restart: unless-stopped
+    ports:
+      - "${PORT:-3000}:3000"
+    environment:
+      DATABASE_URL: postgresql://postgres:${POSTGRES_PASSWORD:-changeme}@postgres:5432/baileys_api
+      JWT_SECRET: ${JWT_SECRET:-change-this-secret-in-production}
+      JWT_EXPIRY: ${JWT_EXPIRY:-7d}
+      PORT: 3000
+      HOST: 0.0.0.0
+      MEDIA_DIR: /data/media
+      AUTH_DIR: /data/auth
+      PUBLIC_URL: ${PUBLIC_URL:-http://localhost:3000}
+      MEDIA_SEND_DELAY_MIN: ${MEDIA_SEND_DELAY_MIN:-500}
+      MEDIA_SEND_DELAY_MAX: ${MEDIA_SEND_DELAY_MAX:-1000}
+      WEBHOOK_RETRY_COUNT: ${WEBHOOK_RETRY_COUNT:-3}
+      WEBHOOK_RETRY_DELAY: ${WEBHOOK_RETRY_DELAY:-2000}
+      ADMIN_USERNAME: ${ADMIN_USERNAME:-admin}
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD:-changeme123}
+    volumes:
+      - media_data:/data/media
+      - auth_data:/data/auth
+    depends_on:
+      postgres:
+        condition: service_healthy
+    command: >
+      sh -c "npx prisma migrate deploy && node src/index.js"
+
+volumes:
+  postgres_data:
+  media_data:
+  auth_data:

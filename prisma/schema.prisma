@@ -1,0 +1,48 @@
+// This is your Prisma schema file
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id           String    @id @default(uuid())
+  username     String    @unique
+  passwordHash String    @map("password_hash")
+  createdAt    DateTime  @default(now()) @map("created_at")
+  sessions     Session[]
+  media        Media[]
+
+  @@map("users")
+}
+
+model Session {
+  id         String    @id @default(uuid())
+  userId     String    @map("user_id")
+  name       String
+  status     String    @default("disconnected") // connected | connecting | disconnected | qr
+  webhookUrl String?   @map("webhook_url")
+  createdAt  DateTime  @default(now()) @map("created_at")
+  lastSeen   DateTime? @map("last_seen")
+  user       User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("sessions")
+}
+
+
+model Media {
+  id        String   @id @default(uuid())
+  userId    String   @map("user_id")
+  filename  String
+  path      String
+  mimeType  String   @map("mime_type")
+  size      Int
+  createdAt DateTime @default(now()) @map("created_at")
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("media")
+}
