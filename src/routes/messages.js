@@ -6,7 +6,49 @@ export async function messageRoutes(fastify) {
   fastify.addHook('preHandler', fastify.authenticate);
 
   // POST /sessions/:id/send — send text message
-  fastify.post('/:id/send', async (request, reply) => {
+  fastify.post('/:id/send', {
+    schema: {
+      tags: ['Messages'],
+      security: [{ bearerAuth: [] }],
+      params: {
+        type: 'object',
+        required: ['id'],
+        properties: {
+          id: { type: 'string', format: 'uuid' }
+        }
+      },
+      body: {
+        type: 'object',
+        required: ['to', 'text'],
+        properties: {
+          to: { type: 'string', description: 'Phone number with country code' },
+          text: { type: 'string' },
+          reply_to: { type: 'string', nullable: true, description: 'Message ID to reply to' }
+        }
+      },
+      response: {
+        200: {
+          type: 'object',
+          properties: {
+            message_id: { type: 'string' },
+            status: { type: 'string' }
+          }
+        },
+        400: {
+          type: 'object',
+          properties: {
+            error: { type: 'string' }
+          }
+        },
+        404: {
+          type: 'object',
+          properties: {
+            error: { type: 'string' }
+          }
+        }
+      }
+    }
+  }, async (request, reply) => {
     const session = await prisma.session.findFirst({
       where: { id: request.params.id, userId: request.user.id }
     });
@@ -23,8 +65,64 @@ export async function messageRoutes(fastify) {
     }
   });
 
-  // POST /sessions/:id/send-media — send media from pool (sequential)
-  fastify.post('/:id/send-media', async (request, reply) => {
+  // POST /sessions/:id/send-media — send media from pool
+  fastify.post('/:id/send-media', {
+    schema: {
+      tags: ['Messages'],
+      security: [{ bearerAuth: [] }],
+      params: {
+        type: 'object',
+        required: ['id'],
+        properties: {
+          id: { type: 'string', format: 'uuid' }
+        }
+      },
+      body: {
+        type: 'object',
+        required: ['to', 'media_ids'],
+        properties: {
+          to: { type: 'string', description: 'Phone number with country code' },
+          media_ids: {
+            type: 'array',
+            items: { type: 'string', format: 'uuid' },
+            description: 'Array of media IDs from uploaded files'
+          },
+          caption: { type: 'string', nullable: true },
+          reply_to: { type: 'string', nullable: true, description: 'Message ID to reply to' }
+        }
+      },
+      response: {
+        200: {
+          type: 'object',
+          properties: {
+            sent: { type: 'integer' },
+            message_ids: { 
+              type: 'array', 
+              items: { type: 'string' }
+            }
+          }
+        },
+        400: {
+          type: 'object',
+          properties: {
+            error: { type: 'string' }
+          }
+        },
+        403: {
+          type: 'object',
+          properties: {
+            error: { type: 'string' }
+          }
+        },
+        404: {
+          type: 'object',
+          properties: {
+            error: { type: 'string' }
+          }
+        }
+      }
+    }
+  }, async (request, reply) => {
     const session = await prisma.session.findFirst({
       where: { id: request.params.id, userId: request.user.id }
     });
@@ -53,7 +151,44 @@ export async function messageRoutes(fastify) {
   });
 
   // GET /sessions/:id/contacts
-  fastify.get('/:id/contacts', async (request, reply) => {
+  fastify.get('/:id/contacts', {
+    schema: {
+      tags: ['Messages'],
+      security: [{ bearerAuth: [] }],
+      params: {
+        type: 'object',
+        required: ['id'],
+        properties: {
+          id: { type: 'string', format: 'uuid' }
+        }
+      },
+      response: {
+        200: {
+          type: 'array',
+          items: {
+            type: 'object',
+            properties: {
+              id: { type: 'string' },
+              name: { type: 'string' },
+              notify: { type: 'string' }
+            }
+          }
+        },
+        400: {
+          type: 'object',
+          properties: {
+            error: { type: 'string' }
+          }
+        },
+        404: {
+          type: 'object',
+          properties: {
+            error: { type: 'string' }
+          }
+        }
+      }
+    }
+  }, async (request, reply) => {
     const session = await prisma.session.findFirst({
       where: { id: request.params.id, userId: request.user.id }
     });

@@ -5,12 +5,34 @@ export async function authRoutes(fastify) {
   // POST /auth/login
   fastify.post('/login', {
     schema: {
+      tags: ['Auth'],
       body: {
         type: 'object',
         required: ['username', 'password'],
         properties: {
           username: { type: 'string' },
           password: { type: 'string' }
+        }
+      },
+      response: {
+        200: {
+          type: 'object',
+          properties: {
+            token: { type: 'string' },
+            user: {
+              type: 'object',
+              properties: {
+                id: { type: 'string' },
+                username: { type: 'string' }
+              }
+            }
+          }
+        },
+        401: {
+          type: 'object',
+          properties: {
+            error: { type: 'string' }
+          }
         }
       }
     }
@@ -35,8 +57,48 @@ export async function authRoutes(fastify) {
     return { token, user: { id: user.id, username: user.username } };
   });
 
-  // POST /auth/register (first-time setup or admin only)
-  fastify.post('/register', async (request, reply) => {
+  // POST /auth/register
+  fastify.post('/register', {
+    schema: {
+      tags: ['Auth'],
+      body: {
+        type: 'object',
+        required: ['username', 'password'],
+        properties: {
+          username: { type: 'string' },
+          password: { type: 'string' }
+        }
+      },
+      response: {
+        201: {
+          type: 'object',
+          properties: {
+            token: { type: 'string' },
+            user: {
+              type: 'object',
+              properties: {
+                id: { type: 'string' },
+                username: { type: 'string' },
+                createdAt: { type: 'string', format: 'date-time' }
+              }
+            }
+          }
+        },
+        400: {
+          type: 'object',
+          properties: {
+            error: { type: 'string' }
+          }
+        },
+        409: {
+          type: 'object',
+          properties: {
+            error: { type: 'string' }
+          }
+        }
+      }
+    }
+  }, async (request, reply) => {
     const { username, password } = request.body;
 
     if (!username || !password) {
@@ -64,6 +126,26 @@ export async function authRoutes(fastify) {
 
   // GET /auth/me
   fastify.get('/me', {
+    schema: {
+      tags: ['Auth'],
+      security: [{ bearerAuth: [] }],
+      response: {
+        200: {
+          type: 'object',
+          properties: {
+            id: { type: 'string' },
+            username: { type: 'string' },
+            createdAt: { type: 'string', format: 'date-time' }
+          }
+        },
+        401: {
+          type: 'object',
+          properties: {
+            error: { type: 'string' }
+          }
+        }
+      }
+    },
     preHandler: [fastify.authenticate]
   }, async (request) => {
     const user = await prisma.user.findUnique({

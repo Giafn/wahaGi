@@ -7,7 +7,29 @@ export async function sessionRoutes(fastify) {
   fastify.addHook('preHandler', fastify.authenticate);
 
   // POST /sessions — create new session
-  fastify.post('/', async (request, reply) => {
+  fastify.post('/', {
+    schema: {
+      tags: ['Sessions'],
+      security: [{ bearerAuth: [] }],
+      body: {
+        type: 'object',
+        properties: {
+          name: { type: 'string' }
+        }
+      },
+      response: {
+        201: {
+          type: 'object',
+          properties: {
+            session_id: { type: 'string' },
+            name: { type: 'string' },
+            status: { type: 'string', enum: ['connecting', 'qr', 'connected'] },
+            qr: { type: 'string', description: 'Base64 encoded QR code' }
+          }
+        }
+      }
+    }
+  }, async (request, reply) => {
     const { name } = request.body || {};
 
     const session = await prisma.session.create({
@@ -33,8 +55,29 @@ export async function sessionRoutes(fastify) {
     });
   });
 
-  // GET /sessions — list all sessions for user
-  fastify.get('/', async (request) => {
+  // GET /sessions — list all sessions
+  fastify.get('/', {
+    schema: {
+      tags: ['Sessions'],
+      security: [{ bearerAuth: [] }],
+      response: {
+        200: {
+          type: 'array',
+          items: {
+            type: 'object',
+            properties: {
+              id: { type: 'string' },
+              name: { type: 'string' },
+              status: { type: 'string' },
+              webhook_url: { type: 'string', nullable: true },
+              created_at: { type: 'string', format: 'date-time' },
+              last_seen: { type: 'string', format: 'date-time', nullable: true }
+            }
+          }
+        }
+      }
+    }
+  }, async (request) => {
     const sessions = await prisma.session.findMany({
       where: { userId: request.user.id },
       orderBy: { createdAt: 'desc' }
@@ -53,8 +96,39 @@ export async function sessionRoutes(fastify) {
     });
   });
 
-  // GET /sessions/:id — get single session status
-  fastify.get('/:id', async (request, reply) => {
+  // GET /sessions/:id — get single session
+  fastify.get('/:id', {
+    schema: {
+      tags: ['Sessions'],
+      security: [{ bearerAuth: [] }],
+      params: {
+        type: 'object',
+        required: ['id'],
+        properties: {
+          id: { type: 'string', format: 'uuid' }
+        }
+      },
+      response: {
+        200: {
+          type: 'object',
+          properties: {
+            id: { type: 'string' },
+            name: { type: 'string' },
+            status: { type: 'string' },
+            webhook_url: { type: 'string', nullable: true },
+            created_at: { type: 'string', format: 'date-time' },
+            last_seen: { type: 'string', format: 'date-time', nullable: true }
+          }
+        },
+        404: {
+          type: 'object',
+          properties: {
+            error: { type: 'string' }
+          }
+        }
+      }
+    }
+  }, async (request, reply) => {
     const session = await prisma.session.findFirst({
       where: { id: request.params.id, userId: request.user.id }
     });
@@ -72,8 +146,29 @@ export async function sessionRoutes(fastify) {
     };
   });
 
-  // GET /sessions/:id/qr — get current QR code
-  fastify.get('/:id/qr', async (request, reply) => {
+  // GET /sessions/:id/qr — get QR code
+  fastify.get('/:id/qr', {
+    schema: {
+      tags: ['Sessions'],
+      security: [{ bearerAuth: [] }],
+      params: {
+        type: 'object',
+        required: ['id'],
+        properties: {
+          id: { type: 'string', format: 'uuid' }
+        }
+      },
+      response: {
+        200: {
+          type: 'object',
+          properties: {
+            qr: { type: 'string', nullable: true },
+            status: { type: 'string' }
+          }
+        }
+      }
+    }
+  }, async (request, reply) => {
     const session = await prisma.session.findFirst({
       where: { id: request.params.id, userId: request.user.id }
     });
@@ -83,7 +178,6 @@ export async function sessionRoutes(fastify) {
     const live = getSession(session.id);
 
     if (!live) {
-      // Start session if not running
       const result = await createSession(session.id, request.user.id);
       if (result.qr) {
         const qrBase64 = await QRCode.toDataURL(result.qr);
@@ -101,7 +195,33 @@ export async function sessionRoutes(fastify) {
   });
 
   // DELETE /sessions/:id
-  fastify.delete('/:id', async (request, reply) => {
+  fastify.delete('/:id', {
+    schema: {
+      tags: ['Sessions'],
+      security: [{ bearerAuth: [] }],
+      params: {
+        type: 'object',
+        required: ['id'],
+        properties: {
+          id: { type: 'string', format: 'uuid' }
+        }
+      },
+      response: {
+        200: {
+          type: 'object',
+          properties: {
+            message: { type: 'string' }
+          }
+        },
+        404: {
+          type: 'object',
+          properties: {
+            error: { type: 'string' }
+          }
+        }
+      }
+    }
+  }, async (request, reply) => {
     const session = await prisma.session.findFirst({
       where: { id: request.params.id, userId: request.user.id }
     });
@@ -115,7 +235,35 @@ export async function sessionRoutes(fastify) {
   });
 
   // POST /sessions/:id/webhook — set webhook URL
-  fastify.post('/:id/webhook', async (request, reply) => {
+  fastify.post('/:id/webhook', {
+    schema: {
+      tags: ['Sessions'],
+      security: [{ bearerAuth: [] }],
+      params: {
+        type: 'object',
+        required: ['id'],
+        properties: {
+          id: { type: 'string', format: 'uuid' }
+        }
+      },
+      body: {
+        type: 'object',
+        required: ['url'],
+        properties: {
+          url: { type: 'string', format: 'uri' }
+        }
+      },
+      response: {
+        200: {
+          type: 'object',
+          properties: {
+            webhook_url: { type: 'string' },
+            message: { type: 'string' }
+          }
+        }
+      }
+    }
+  }, async (request, reply) => {
     const { url } = request.body || {};
 
     if (!url) return reply.code(400).send({ error: 'url is required' });
@@ -135,7 +283,28 @@ export async function sessionRoutes(fastify) {
   });
 
   // POST /sessions/:id/profile-picture
-  fastify.post('/:id/profile-picture', async (request, reply) => {
+  fastify.post('/:id/profile-picture', {
+    schema: {
+      tags: ['Sessions'],
+      security: [{ bearerAuth: [] }],
+      params: {
+        type: 'object',
+        required: ['id'],
+        properties: {
+          id: { type: 'string', format: 'uuid' }
+        }
+      },
+      consumes: ['multipart/form-data'],
+      response: {
+        200: {
+          type: 'object',
+          properties: {
+            message: { type: 'string' }
+          }
+        }
+      }
+    }
+  }, async (request, reply) => {
     const session = await prisma.session.findFirst({
       where: { id: request.params.id, userId: request.user.id }
     });
@@ -161,7 +330,34 @@ export async function sessionRoutes(fastify) {
   });
 
   // POST /sessions/:id/status — set status/about
-  fastify.post('/:id/status', async (request, reply) => {
+  fastify.post('/:id/status', {
+    schema: {
+      tags: ['Sessions'],
+      security: [{ bearerAuth: [] }],
+      params: {
+        type: 'object',
+        required: ['id'],
+        properties: {
+          id: { type: 'string', format: 'uuid' }
+        }
+      },
+      body: {
+        type: 'object',
+        required: ['text'],
+        properties: {
+          text: { type: 'string' }
+        }
+      },
+      response: {
+        200: {
+          type: 'object',
+          properties: {
+            message: { type: 'string' }
+          }
+        }
+      }
+    }
+  }, async (request, reply) => {
     const { text } = request.body || {};
     const session = await prisma.session.findFirst({
       where: { id: request.params.id, userId: request.user.id }
@@ -183,7 +379,28 @@ export async function sessionRoutes(fastify) {
   });
 
   // POST /sessions/:id/restart
-  fastify.post('/:id/restart', async (request, reply) => {
+  fastify.post('/:id/restart', {
+    schema: {
+      tags: ['Sessions'],
+      security: [{ bearerAuth: [] }],
+      params: {
+        type: 'object',
+        required: ['id'],
+        properties: {
+          id: { type: 'string', format: 'uuid' }
+        }
+      },
+      response: {
+        200: {
+          type: 'object',
+          properties: {
+            status: { type: 'string' },
+            qr: { type: 'string', nullable: true }
+          }
+        }
+      }
+    }
+  }, async (request, reply) => {
     const session = await prisma.session.findFirst({
       where: { id: request.params.id, userId: request.user.id }
     });

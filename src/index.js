@@ -4,6 +4,8 @@ import cors from '@fastify/cors';
 import jwt from '@fastify/jwt';
 import multipart from '@fastify/multipart';
 import staticFiles from '@fastify/static';
+import swagger from '@fastify/swagger';
+import swaggerUI from '@fastify/swagger-ui';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { prisma } from './db/client.js';
@@ -13,6 +15,7 @@ import { messageRoutes } from './routes/messages.js';
 import { mediaRoutes } from './routes/media.js';
 import { chatRoutes } from './routes/chats.js';
 import { ensureDirectories } from './utils/fs.js';
+import { swaggerOptions, swaggerUIOptions } from './swagger.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -25,6 +28,10 @@ const app = Fastify({
     }
   }
 });
+
+// Swagger setup
+await app.register(swagger, swaggerOptions);
+await app.register(swaggerUI, swaggerUIOptions);
 
 // Plugins
 await app.register(cors, { origin: true });
@@ -70,7 +77,21 @@ await app.register(chatRoutes, { prefix: '/sessions' });
 await app.register(mediaRoutes, { prefix: '/media' });
 
 // Health check
-app.get('/health', async () => ({
+app.get('/health', {
+  schema: {
+    tags: ['Health'],
+    response: {
+      200: {
+        type: 'object',
+        properties: {
+          status: { type: 'string' },
+          timestamp: { type: 'string', format: 'date-time' },
+          version: { type: 'string' }
+        }
+      }
+    }
+  }
+}, async () => ({
   status: 'ok',
   timestamp: new Date().toISOString(),
   version: '1.0.0'

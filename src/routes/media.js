@@ -13,7 +13,44 @@ export async function mediaRoutes(fastify) {
   fastify.addHook('preHandler', fastify.authenticate);
 
   // POST /media/upload — upload one or multiple files
-  fastify.post('/upload', async (request, reply) => {
+  fastify.post('/upload', {
+    schema: {
+      tags: ['Media'],
+      security: [{ bearerAuth: [] }],
+      consumes: ['multipart/form-data'],
+      body: {
+        type: 'object',
+        properties: {
+          files: {
+            type: 'array',
+            items: {
+              type: 'string',
+              format: 'binary'
+            },
+            description: 'One or more files to upload'
+          }
+        }
+      },
+      response: {
+        201: {
+          type: 'object',
+          properties: {
+            media_ids: {
+              type: 'array',
+              items: { type: 'string', format: 'uuid' }
+            },
+            count: { type: 'integer' }
+          }
+        },
+        400: {
+          type: 'object',
+          properties: {
+            error: { type: 'string' }
+          }
+        }
+      }
+    }
+  }, async (request, reply) => {
     const mediaIds = [];
     const parts = request.files();
 
@@ -56,7 +93,41 @@ export async function mediaRoutes(fastify) {
   });
 
   // GET /media — list user's media
-  fastify.get('/', async (request) => {
+  fastify.get('/', {
+    schema: {
+      tags: ['Media'],
+      security: [{ bearerAuth: [] }],
+      querystring: {
+        type: 'object',
+        properties: {
+          limit: { type: 'integer', default: 50, minimum: 1, maximum: 100 },
+          offset: { type: 'integer', default: 0, minimum: 0 }
+        }
+      },
+      response: {
+        200: {
+          type: 'object',
+          properties: {
+            media: {
+              type: 'array',
+              items: {
+                type: 'object',
+                properties: {
+                  id: { type: 'string' },
+                  filename: { type: 'string' },
+                  mimeType: { type: 'string' },
+                  size: { type: 'integer' },
+                  url: { type: 'string', format: 'uri' },
+                  createdAt: { type: 'string', format: 'date-time' }
+                }
+              }
+            },
+            total: { type: 'integer' }
+          }
+        }
+      }
+    }
+  }, async (request) => {
     const { limit = 50, offset = 0 } = request.query;
     const media = await prisma.media.findMany({
       where: { userId: request.user.id },
@@ -85,7 +156,38 @@ export async function mediaRoutes(fastify) {
   });
 
   // GET /media/:id — get single media info
-  fastify.get('/:id', async (request, reply) => {
+  fastify.get('/:id', {
+    schema: {
+      tags: ['Media'],
+      security: [{ bearerAuth: [] }],
+      params: {
+        type: 'object',
+        required: ['id'],
+        properties: {
+          id: { type: 'string', format: 'uuid' }
+        }
+      },
+      response: {
+        200: {
+          type: 'object',
+          properties: {
+            id: { type: 'string' },
+            filename: { type: 'string' },
+            mime_type: { type: 'string' },
+            size: { type: 'integer' },
+            url: { type: 'string', format: 'uri' },
+            created_at: { type: 'string', format: 'date-time' }
+          }
+        },
+        404: {
+          type: 'object',
+          properties: {
+            error: { type: 'string' }
+          }
+        }
+      }
+    }
+  }, async (request, reply) => {
     const media = await prisma.media.findFirst({
       where: { id: request.params.id, userId: request.user.id }
     });
@@ -103,7 +205,33 @@ export async function mediaRoutes(fastify) {
   });
 
   // DELETE /media/:id
-  fastify.delete('/:id', async (request, reply) => {
+  fastify.delete('/:id', {
+    schema: {
+      tags: ['Media'],
+      security: [{ bearerAuth: [] }],
+      params: {
+        type: 'object',
+        required: ['id'],
+        properties: {
+          id: { type: 'string', format: 'uuid' }
+        }
+      },
+      response: {
+        200: {
+          type: 'object',
+          properties: {
+            message: { type: 'string' }
+          }
+        },
+        404: {
+          type: 'object',
+          properties: {
+            error: { type: 'string' }
+          }
+        }
+      }
+    }
+  }, async (request, reply) => {
     const media = await prisma.media.findFirst({
       where: { id: request.params.id, userId: request.user.id }
     });
