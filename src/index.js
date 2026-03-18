@@ -12,7 +12,6 @@ import { prisma } from './db/client.js';
 import { authRoutes } from './routes/auth.js';
 import { sessionRoutes } from './routes/sessions.js';
 import { messageRoutes } from './routes/messages.js';
-import { mediaRoutes } from './routes/media.js';
 import { chatRoutes } from './routes/chats.js';
 import { ensureDirectories } from './utils/fs.js';
 import { swaggerOptions, swaggerUIOptions } from './swagger.js';
@@ -41,12 +40,13 @@ await app.register(jwt, {
 });
 await app.register(multipart, {
   limits: {
-    fileSize: 50 * 1024 * 1024, // 50MB
+    fileSize: 50 * 1024 * 1024,
     files: 20
-  }
+  },
+  attachFieldsToBody: true
 });
 
-// Serve media files
+// Serve media files (for downloaded media from webhooks)
 await app.register(staticFiles, {
   root: path.resolve(process.env.MEDIA_DIR || './media'),
   prefix: '/media/files/',
@@ -75,7 +75,6 @@ await app.register(authRoutes, { prefix: '/auth' });
 await app.register(sessionRoutes, { prefix: '/sessions' });
 await app.register(messageRoutes, { prefix: '/sessions' });
 await app.register(chatRoutes, { prefix: '/sessions' });
-await app.register(mediaRoutes, { prefix: '/media' });
 
 // Health check
 app.get('/health', {

@@ -1,5 +1,5 @@
 import { prisma } from '../db/client.js';
-import { sendText, sendMediaById } from '../services/messageSender.js';
+import { sendText, sendMedia, sendMultipleMedia } from '../services/messageSender.js';
 import { getSession } from '../services/sessionManager.js';
 
 export async function messageRoutes(fastify) {
@@ -65,7 +65,7 @@ export async function messageRoutes(fastify) {
     }
   });
 
-  // POST /sessions/:id/send-media — send media from pool
+  // POST /sessions/:id/send-media — send single media (multipart)
   fastify.post('/:id/send-media', {
     schema: {
       tags: ['Messages'],
@@ -77,38 +77,16 @@ export async function messageRoutes(fastify) {
           id: { type: 'string', format: 'uuid' }
         }
       },
-      body: {
-        type: 'object',
-        required: ['to', 'media_ids'],
-        properties: {
-          to: { type: 'string', description: 'Phone number with country code' },
-          media_ids: {
-            type: 'array',
-            items: { type: 'string', format: 'uuid' },
-            description: 'Array of media IDs from uploaded files'
-          },
-          caption: { type: 'string', nullable: true },
-          reply_to: { type: 'string', nullable: true, description: 'Message ID to reply to' }
-        }
-      },
+      consumes: ['multipart/form-data'],
       response: {
         200: {
           type: 'object',
           properties: {
-            sent: { type: 'integer' },
-            message_ids: { 
-              type: 'array', 
-              items: { type: 'string' }
-            }
+            message_id: { type: 'string' },
+            status: { type: 'string' }
           }
         },
         400: {
-          type: 'object',
-          properties: {
-            error: { type: 'string' }
-          }
-        },
-        403: {
           type: 'object',
           properties: {
             error: { type: 'string' }
@@ -128,24 +106,147 @@ export async function messageRoutes(fastify) {
     });
     if (!session) return reply.code(404).send({ error: 'Session not found' });
 
-    const { to, media_ids, caption, reply_to } = request.body || {};
-    if (!to || !media_ids?.length) return reply.code(400).send({ error: 'to and media_ids are required' });
+    // Get all form data including files
+    const data = await request.file();
+    if (!data) return reply.code(400).send({ error: 'No file uploaded' });
 
-    // Verify ownership
-    const mediaList = await prisma.media.findMany({
-      where: { id: { in: media_ids }, userId: request.user.id }
-    });
-    if (mediaList.length !== media_ids.length) {
-      return reply.code(403).send({ error: 'One or more media files not found or not owned by you' });
-    }
+    // Get fields from multipart data
+    const to = data.fields.to?.value || data.fields.to;
+    const caption = data.fields.caption?.value || data.fields.caption || '';
+    const reply_to = data.fields.reply_to?.value || data.fields.reply_to || null;
 
-    // Sort by requested order
-    const sorted = media_ids.map(id => mediaList.find(m => m.id === id)).filter(Boolean);
+    if (!to) return reply.code(400).send({ error: 'to (phone number) is required' });
 
     try {
-      const results = await sendMediaById(session.id, to, sorted, caption, reply_to);
-      return { sent: results.length, message_ids: results.map(r => r.key?.id) };
+      const buffer = await data.toBuffer();
+      const result = await sendMedia(
+        session.id,
+        to,
+        buffer,
+        data.mimetype,
+        data.filename,
+        caption,
+        reply_to
+      );
+      return { message_id: result.key?.id, status: 'sent' };
     } catch (err) {
+      return reply.code(400).send({ error: err.message });
+    }
+  });
+
+  // POST /sessions/:id/send-multiple-media — send multiple media files (multipart)
+  fastify.post('/:id/send-multiple-media', {
+    schema: {
+      tags: ['Messages'],
+      security: [{ bearerAuth: [] }],
+      params: {
+        type: 'object',
+        required: ['id'],
+        properties: {
+          id: { type: 'string', format: 'uuid' }
+        }
+      },
+      consumes: ['multipart/form-data'],
+      response: {
+        200: {
+          type: 'object',
+          properties: {
+            sent: { type: 'integer', description: 'Number of media sent' },
+            message_ids: {
+              type: 'array',
+              items: { type: 'string' },
+              description: 'Message IDs for each sent media'
+            }
+          }
+        },
+        400: {
+          type: 'object',
+          properties: {
+            error: { type: 'string' }
+          }
+        },
+        404: {
+          type: 'object',
+          properties: {
+            error: { type: 'string' }
+          }
+        }
+      }
+    }
+  }, async (request, reply) => {
+    const session = await prisma.session.findFirst({
+      where: { id: request.params.id, userId: request.user.id }
+    });
+    if (!session) return reply.code(404).send({ error: 'Session not found' });
+
+    // Get fields from body - with attachFieldsToBody, fields have .value property
+    let to = request.body?.to;
+    let caption = request.body?.caption || '';
+    let reply_to = request.body?.reply_to || null;
+
+    // Extract value from field object (attachFieldsToBody format)
+    if (to && typeof to === 'object' && to.value !== undefined) {
+      to = to.value;
+    }
+    if (caption && typeof caption === 'object' && caption.value !== undefined) {
+      caption = caption.value;
+    }
+    if (reply_to && typeof reply_to === 'object' && reply_to.value !== undefined) {
+      reply_to = reply_to.value;
+    }
+
+    console.log('[SEND-MULTIPLE] Parsed - to:', to, 'caption:', caption);
+
+    if (!to) {
+      return reply.code(400).send({ error: 'to (phone number) is required' });
+    }
+
+    // Get files from body
+    const files = [];
+    if (request.body?.files) {
+      const filesArray = Array.isArray(request.body.files) ? request.body.files : [request.body.files];
+      for (const fileField of filesArray) {
+        if (fileField && fileField.file) {
+          const buffer = await fileField.toBuffer();
+          files.push({
+            buffer,
+            mimetype: fileField.mimetype,
+            filename: fileField.filename
+          });
+        }
+      }
+    }
+
+    // Fallback: try request.files()
+    if (files.length === 0) {
+      const fileParts = request.files();
+      for await (const part of fileParts) {
+        if (part.filename) {
+          const buffer = await part.toBuffer();
+          files.push({
+            buffer,
+            mimetype: part.mimetype,
+            filename: part.filename
+          });
+        }
+      }
+    }
+
+    console.log('[SEND-MULTIPLE] Total files:', files.length);
+
+    if (files.length === 0) {
+      return reply.code(400).send({ error: 'No files uploaded' });
+    }
+
+    try {
+      const results = await sendMultipleMedia(session.id, to, files, caption, reply_to);
+      console.log('[SUCCESS] Sent', results.length, 'media files');
+      return {
+        sent: results.length,
+        message_ids: results.map(r => r.key?.id)
+      };
+    } catch (err) {
+      console.error('[ERROR] sendMultipleMedia:', err.message);
       return reply.code(400).send({ error: err.message });
     }
   });

@@ -2,7 +2,7 @@ export const swaggerOptions = {
   openapi: {
     openapi: '3.0.0',
     info: {
-      title: 'Baileys WhatsApp API',
+      title: 'wahaGI - WhatsApp Gateway API',
       description: 'Multi-tenant WhatsApp API wrapper using Baileys library',
       version: '1.0.0',
       contact: {
@@ -11,8 +11,8 @@ export const swaggerOptions = {
     },
     servers: [
       {
-        url: 'http://localhost:3000',
-        description: 'Development server'
+        url: process.env.PUBLIC_URL || 'http://localhost:3021',
+        description: 'Active Server'
       }
     ],
     components: {
@@ -59,6 +59,16 @@ export const swaggerOptions = {
           properties: {
             message_id: { type: 'string' },
             status: { type: 'string' }
+          }
+        },
+        MediaMessage: {
+          type: 'object',
+          properties: {
+            message_id: { type: 'string' },
+            status: { type: 'string' },
+            media_url: { type: 'string', format: 'uri' },
+            media_path: { type: 'string' },
+            media_size: { type: 'integer' }
           }
         },
         Media: {

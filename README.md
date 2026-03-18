@@ -9,9 +9,8 @@ REST API berbasis [Baileys](https://github.com/WhiskeySockets/Baileys) untuk mul
 - **Multi-tenant** — setiap user punya session (device) sendiri
 - **Multi-device** — satu user bisa punya banyak WA session
 - **REST API** — bersih, JSON, mudah diintegrasikan ke n8n / AI
-- **Media Pool** — upload banyak file, kirim sequential (anti-ban)
 - **Webhook** — push event ke URL kamu, retry 3x exponential backoff
-- **Admin Panel** — React + Tailwind, QR modal, media manager
+- **Admin Panel** — React + Tailwind, QR modal
 - **JWT Auth** — stateless, secure
 
 ---
@@ -277,49 +276,39 @@ curl http://localhost:3000/sessions/<id>/qr \
 | Method | Path | Description |
 |--------|------|-------------|
 | POST | `/sessions/:id/send` | Kirim teks |
-| POST | `/sessions/:id/send-media` | Kirim media dari pool (sequential) |
-| GET | `/sessions/:id/chats` | List chat |
+| POST | `/sessions/:id/send-media` | Kirim single media (multipart) |
+| POST | `/sessions/:id/send-multiple-media` | Kirim multiple media (multipart) |
 | GET | `/sessions/:id/contacts` | List kontak |
 
 **Kirim teks:**
 ```bash
-curl -X POST http://localhost:3000/sessions/<id>/send \
+curl -X POST http://localhost:3021/sessions/<id>/send \
   -H "Authorization: Bearer <token>" \
   -H "Content-Type: application/json" \
   -d '{"to":"628xxxxxxxxxx","text":"Halo!"}'
 ```
 
-**Kirim multiple media (sequential, anti-ban):**
+**Kirim single media:**
 ```bash
-curl -X POST http://localhost:3000/sessions/<id>/send-media \
+curl -X POST http://localhost:3021/sessions/<id>/send-media \
   -H "Authorization: Bearer <token>" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "to": "628xxxxxxxxxx",
-    "media_ids": ["uuid1", "uuid2", "uuid3"],
-    "caption": "Ini 3 gambar produk",
-    "reply_to": null
-  }'
+  -F "to=628xxxxxxxxxx" \
+  -F "caption=Ini gambar" \
+  -F "file=@photo.jpg"
 ```
 
-### Media Pool
-
-| Method | Path | Description |
-|--------|------|-------------|
-| POST | `/media/upload` | Upload satu/banyak file |
-| GET | `/media` | List semua media |
-| GET | `/media/:id` | Info satu file |
-| DELETE | `/media/:id` | Hapus file |
-
-**Upload multiple files:**
+**Kirim multiple media:**
 ```bash
-curl -X POST http://localhost:3000/media/upload \
+curl -X POST http://localhost:3021/sessions/<id>/send-multiple-media \
   -H "Authorization: Bearer <token>" \
+  -F "to=628xxxxxxxxxx" \
+  -F "caption=Foto produk" \
   -F "files=@photo1.jpg" \
   -F "files=@photo2.jpg" \
-  -F "files=@catalog.pdf"
-# Response: { "media_ids": ["id1","id2","id3"], "count": 3 }
+  -F "files=@photo3.jpg"
 ```
+
+> **Note:** Swagger UI memiliki keterbatasan untuk upload file. Gunakan curl atau Postman untuk testing media upload. Lihat [MEDIA_TESTING_GUIDE.md](MEDIA_TESTING_GUIDE.md) untuk contoh lengkap.
 
 ---
 
@@ -349,9 +338,14 @@ Set webhook URL di `/sessions/:id/webhook`, lalu semua event akan di-POST ke URL
   "type": "image",
   "mimetype": "image/jpeg",
   "caption": "Ini gambar",
+  "filename": "image.jpg",
+  "media_url": "http://localhost:3021/media/files/123456-image.jpg",
+  "media_size": 102400,
   "timestamp": 1710000000
 }
 ```
+
+> **Note:** Media yang masuk akan otomatis di-download dan URL-nya disertakan dalam webhook payload. Media disimpan di `/media/files/` dan bisa diakses via `PUBLIC_URL/media/files/<filename>`.
 
 **Update status session:**
 ```json

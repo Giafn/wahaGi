@@ -49,15 +49,50 @@ export const api = {
 
   // Messages
   sendText: (id, to, text, reply_to) => request('POST', `/sessions/${id}/send`, { to, text, reply_to }),
-  sendMedia: (id, to, media_ids, caption, reply_to) =>
-    request('POST', `/sessions/${id}/send-media`, { to, media_ids, caption, reply_to }),
+  sendMedia: (id, formData) => {
+    const token = localStorage.getItem('token');
+    return fetch(`/sessions/${id}/send-media`, {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${token}`
+      },
+      body: formData
+    }).then(res => {
+      if (res.status === 401) {
+        localStorage.removeItem('token');
+        localStorage.removeItem('user');
+        window.location.href = '/';
+        throw new Error('Unauthorized');
+      }
+      return res.json().then(data => {
+        if (!res.ok) throw new Error(data.error || data.message || `HTTP ${res.status}`);
+        return data;
+      });
+    });
+  },
+  sendMultipleMedia: (id, formData) => {
+    const token = localStorage.getItem('token');
+    return fetch(`/sessions/${id}/send-multiple-media`, {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${token}`
+      },
+      body: formData
+    }).then(res => {
+      if (res.status === 401) {
+        localStorage.removeItem('token');
+        localStorage.removeItem('user');
+        window.location.href = '/';
+        throw new Error('Unauthorized');
+      }
+      return res.json().then(data => {
+        if (!res.ok) throw new Error(data.error || data.message || `HTTP ${res.status}`);
+        return data;
+      });
+    });
+  },
 
   // Chats
   listChats: (id) => request('GET', `/sessions/${id}/chats`),
   listContacts: (id) => request('GET', `/sessions/${id}/contacts`),
-
-  // Media
-  uploadMedia: (formData) => request('POST', '/media/upload', formData, true),
-  listMedia: () => request('GET', '/media'),
-  deleteMedia: (id) => request('DELETE', `/media/${id}`),
 };

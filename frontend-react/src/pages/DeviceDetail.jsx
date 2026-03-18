@@ -1,6 +1,6 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { ArrowLeft, Save, QrCode, Send, Globe, MessageSquare, RefreshCw, Trash2 } from 'lucide-react';
+import { ArrowLeft, Save, QrCode, Send, Globe, MessageSquare, RefreshCw, Trash2, Copy } from 'lucide-react';
 import toast from 'react-hot-toast';
 import Layout from '../components/Layout';
 import StatusBadge from '../components/StatusBadge';
@@ -20,8 +20,10 @@ export default function DeviceDetail() {
   const [savingWebhook, setSavingWebhook] = useState(false);
 
   // Send test form
-  const [sendForm, setSendForm] = useState({ to: '', text: '' });
+  const [sendForm, setSendForm] = useState({ to: '', text: '', media: [] });
   const [sending, setSending] = useState(false);
+  const [sendMode, setSendMode] = useState('text'); // 'text' or 'media'
+  const fileInputRef = useRef(null);
 
   // Chats
   const [chats, setChats] = useState([]);
@@ -77,12 +79,31 @@ export default function DeviceDetail() {
   };
 
   const sendTest = async () => {
-    if (!sendForm.to || !sendForm.text) { toast.error('To and text required'); return; }
+    if (!sendForm.to || (!sendForm.text && sendForm.media.length === 0)) {
+      toast.error('To and message/media required');
+      return;
+    }
     setSending(true);
     try {
-      const result = await api.sendText(id, sendForm.to, sendForm.text);
-      toast.success(`Sent! ID: ${result.message_id?.slice(0, 8)}...`);
-      setSendForm(f => ({ ...f, text: '' }));
+      if (sendMode === 'text') {
+        const result = await api.sendText(id, sendForm.to, sendForm.text);
+        toast.success(`Sent! ID: ${result.message_id?.slice(0, 8)}...`);
+        setSendForm(f => ({ ...f, text: '' }));
+      } else if (sendMode === 'media' && sendForm.media.length > 0) {
+        const formData = new FormData();
+        formData.append('to', sendForm.to);
+        formData.append('caption', sendForm.text || '');
+
+        // Append all files
+        sendForm.media.forEach(file => {
+          formData.append('files', file);
+        });
+
+        const result = await api.sendMultipleMedia(id, formData);
+        toast.success(`Sent ${result.sent} media!`);
+        setSendForm(f => ({ ...f, text: '', media: [] }));
+        if (fileInputRef.current) fileInputRef.current.value = '';
+      }
     } catch (err) {
       toast.error(err.message);
     } finally {
@@ -111,6 +132,15 @@ export default function DeviceDetail() {
     }
   };
 
+  const handleCopyId = async () => {
+    try {
+      await navigator.clipboard.writeText(id);
+      toast.success('Session ID copied to clipboard');
+    } catch (err) {
+      toast.error('Failed to copy');
+    }
+  };
+
   const TABS = [
     { id: 'webhook', label: 'Webhook', icon: Globe },
     { id: 'send', label: 'Send Test', icon: Send },
@@ -134,6 +164,13 @@ export default function DeviceDetail() {
         <div className="flex items-center gap-2">
           <button onClick={() => navigate('/dashboard')} className="flex items-center gap-2 border border-border font-mono text-xs text-muted px-3 py-2 hover:text-white transition-colors">
             <ArrowLeft size={12} /> Back
+          </button>
+          <button
+            onClick={handleCopyId}
+            title="Copy Session ID"
+            className="flex items-center gap-2 border border-border font-mono text-xs text-muted px-3 py-2 hover:text-green hover:border-green/30 transition-colors"
+          >
+            <Copy size={12} /> Copy ID
           </button>
           {session?.status !== 'connected' && (
             <button onClick={() => setQrOpen(true)} className="flex items-center gap-2 border border-blue/30 text-blue font-mono text-xs px-3 py-2 hover:bg-blue/10 transition-colors">
@@ -250,6 +287,31 @@ export default function DeviceDetail() {
               ⚠ Device not connected. Connect via QR first.
             </div>
           )}
+
+          {/* Mode toggle */}
+          <div className="flex gap-2 mb-6 border-b border-border">
+            <button
+              onClick={() => setSendMode('text')}
+              className={`flex-1 font-mono text-xs py-3 transition-colors ${
+                sendMode === 'text'
+                  ? 'text-green border-b-2 border-green bg-green/5'
+                  : 'text-muted hover:text-white'
+              }`}
+            >
+              📝 Text Message
+            </button>
+            <button
+              onClick={() => setSendMode('media')}
+              className={`flex-1 font-mono text-xs py-3 transition-colors ${
+                sendMode === 'media'
+                  ? 'text-green border-b-2 border-green bg-green/5'
+                  : 'text-muted hover:text-white'
+              }`}
+            >
+              📎 Media File
+            </button>
+          </div>
+
           <div className="space-y-4">
             <div>
               <label className="font-mono text-xs text-muted tracking-widest uppercase block mb-2">To (phone number)</label>
@@ -260,22 +322,58 @@ export default function DeviceDetail() {
                 className="w-full bg-bg border border-border text-white font-mono text-sm px-4 py-3 outline-none focus:border-border-active transition-colors"
               />
             </div>
-            <div>
-              <label className="font-mono text-xs text-muted tracking-widest uppercase block mb-2">Message</label>
-              <textarea
-                value={sendForm.text}
-                onChange={e => setSendForm(f => ({ ...f, text: e.target.value }))}
-                placeholder="Hello from Baileys API!"
-                rows={4}
-                className="w-full bg-bg border border-border text-white font-mono text-sm px-4 py-3 outline-none focus:border-border-active transition-colors resize-none"
-              />
-            </div>
+
+            {sendMode === 'text' ? (
+              <div>
+                <label className="font-mono text-xs text-muted tracking-widest uppercase block mb-2">Message</label>
+                <textarea
+                  value={sendForm.text}
+                  onChange={e => setSendForm(f => ({ ...f, text: e.target.value }))}
+                  placeholder="Hello from wahaGI!"
+                  rows={4}
+                  className="w-full bg-bg border border-border text-white font-mono text-sm px-4 py-3 outline-none focus:border-border-active transition-colors resize-none"
+                />
+              </div>
+            ) : (
+              <div>
+                <label className="font-mono text-xs text-muted tracking-widest uppercase block mb-2">Media Files (Multiple)</label>
+                <input
+                  ref={fileInputRef}
+                  type="file"
+                  multiple
+                  onChange={e => setSendForm(f => ({ ...f, media: Array.from(e.target.files || []) }))}
+                  className="w-full bg-bg border border-border text-white font-mono text-sm px-4 py-3 outline-none focus:border-border-active transition-colors"
+                  accept="image/*,video/*,audio/*,application/*"
+                />
+                {sendForm.media.length > 0 && (
+                  <div className="mt-2 space-y-1">
+                    {sendForm.media.map((file, idx) => (
+                      <p key={idx} className="font-mono text-xs text-green">
+                        ✓ {idx + 1}. {file.name} ({(file.size / 1024).toFixed(1)} KB)
+                      </p>
+                    ))}
+                    <p className="font-mono text-xs text-muted pt-1">
+                      Total: {sendForm.media.length} file(s)
+                    </p>
+                  </div>
+                )}
+                <label className="font-mono text-xs text-muted tracking-widest uppercase block mb-2 mt-4">Caption (optional)</label>
+                <textarea
+                  value={sendForm.text}
+                  onChange={e => setSendForm(f => ({ ...f, text: e.target.value }))}
+                  placeholder="Add a caption for all files..."
+                  rows={2}
+                  className="w-full bg-bg border border-border text-white font-mono text-sm px-4 py-3 outline-none focus:border-border-active transition-colors resize-none"
+                />
+              </div>
+            )}
+
             <button
               onClick={sendTest}
-              disabled={sending || session?.status !== 'connected'}
+              disabled={sending || session?.status !== 'connected' || (sendMode === 'media' && sendForm.media.length === 0)}
               className="flex items-center gap-2 bg-green text-black font-mono text-xs font-semibold tracking-widest uppercase px-5 py-3 hover:opacity-85 transition-opacity disabled:opacity-40"
             >
-              <Send size={12} /> {sending ? 'Sending...' : 'Send Message'}
+              <Send size={12} /> {sending ? 'Sending...' : (sendMode === 'text' ? 'Send Message' : `Send ${sendForm.media.length} Media`)}
             </button>
           </div>
         </div>

@@ -1,11 +1,10 @@
 import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
-import { LayoutGrid, Image, LogOut, Activity, ChevronRight } from 'lucide-react';
+import { LayoutGrid, LogOut, Activity, ChevronRight } from 'lucide-react';
 import clsx from 'clsx';
 
 const NAV = [
   { path: '/dashboard', label: 'Devices', icon: LayoutGrid },
-  { path: '/media', label: 'Media Pool', icon: Image },
 ];
 
 export default function Layout({ children, title, subtitle, actions }) {

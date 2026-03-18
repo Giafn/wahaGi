@@ -2,7 +2,8 @@ import makeWASocket, {
   DisconnectReason,
   fetchLatestBaileysVersion,
   makeCacheableSignalKeyStore,
-  useMultiFileAuthState
+  useMultiFileAuthState,
+  downloadMediaMessage
 } from '@whiskeysockets/baileys';
 import { Boom } from '@hapi/boom';
 import path from 'path';
@@ -199,7 +200,7 @@ async function _initSocket(sessionId, userId) {
 
       const jid = msg.key.remoteJid;
       const msgType = getMessageType(msg);
-      const payload = buildWebhookPayload(msg, msgType, sessionId);
+      const payload = await buildWebhookPayload(msg, msgType, sessionId);
 
       log(`🔔 Dispatching webhook: event=${payload.event}, from=${jid}, type=${msgType}`);
       await dispatchWebhook(sessionId, payload);
@@ -236,7 +237,7 @@ function getMessageType(msg) {
   return keys[0] || 'unknown';
 }
 
-function buildWebhookPayload(msg, type, sessionId) {
+async function buildWebhookPayload(msg, type, sessionId) {
   const base = {
     event: 'message.received',
     session_id: sessionId,
@@ -256,7 +257,81 @@ function buildWebhookPayload(msg, type, sessionId) {
     base.mimetype = mediaMsg?.mimetype;
     base.filename = mediaMsg?.fileName;
     base.caption = mediaMsg?.caption;
+
+    // Download and save media, include URL in webhook
+    try {
+      const mediaInfo = await downloadAndSaveMedia(msg, sessionId);
+      base.media_url = mediaInfo.fileUrl;
+      base.media_path = mediaInfo.filePath;
+      base.media_size = mediaInfo.size;
+      log(`💾 Media saved: ${mediaInfo.fileUrl}`);
+    } catch (err) {
+      log(`❌ Failed to download media: ${err.message}`);
+    }
   }
 
   return base;
+}
+
+/**
+ * Download media from message and save to file
+ */
+async function downloadAndSaveMedia(msg, sessionId) {
+  const session = getSession(sessionId);
+  if (!session) {
+    throw new Error('Session not found');
+  }
+
+  const buffer = await downloadMediaMessage(
+    msg,
+    'buffer',
+    {},
+    { logger: undefined, reuploadRequest: session.socket.updateMediaMessage }
+  );
+
+  if (!buffer) {
+    throw new Error('Failed to download media');
+  }
+
+  const mimetype = msg.message?.imageMessage?.mimetype ||
+                   msg.message?.videoMessage?.mimetype ||
+                   msg.message?.documentMessage?.mimetype ||
+                   msg.message?.audioMessage?.mimetype ||
+                   'application/octet-stream';
+
+  const ext = getExtension(mimetype);
+  const filename = `${Date.now()}-${Math.random().toString(36).substring(7)}.${ext}`;
+  const filePath = path.join(AUTH_DIR, 'media', filename);
+
+  await fs.mkdir(path.join(AUTH_DIR, 'media'), { recursive: true });
+  await fs.writeFile(filePath, buffer);
+
+  const fileUrl = `${process.env.PUBLIC_URL || 'http://localhost:3021'}/media/files/${filename}`;
+
+  return {
+    filename,
+    filePath,
+    fileUrl,
+    mimetype,
+    size: buffer.length
+  };
+}
+
+function getExtension(mimetype) {
+  const map = {
+    'image/jpeg': 'jpg',
+    'image/png': 'png',
+    'image/gif': 'gif',
+    'image/webp': 'webp',
+    'video/mp4': 'mp4',
+    'video/quicktime': 'mov',
+    'audio/mpeg': 'mp3',
+    'audio/ogg': 'ogg',
+    'audio/mp4': 'm4a',
+    'application/pdf': 'pdf',
+    'application/zip': 'zip',
+    'application/xlsx': 'xlsx',
+    'application/docx': 'docx'
+  };
+  return map[mimetype] || 'bin';
 }

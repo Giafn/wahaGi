@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Plus, Trash2, Settings, QrCode, RefreshCw, Wifi, WifiOff } from 'lucide-react';
+import { Plus, Trash2, Settings, QrCode, RefreshCw, Wifi, WifiOff, Copy } from 'lucide-react';
 import toast from 'react-hot-toast';
 import Layout from '../components/Layout';
 import StatusBadge from '../components/StatusBadge';
@@ -61,6 +61,15 @@ export default function Dashboard() {
       setSessions(s => s.filter(x => x.id !== id));
     } catch (err) {
       toast.error(err.message);
+    }
+  };
+
+  const handleCopyId = async (id, name) => {
+    try {
+      await navigator.clipboard.writeText(id);
+      toast.success(`Copied ${name} ID to clipboard`);
+    } catch (err) {
+      toast.error('Failed to copy');
     }
   };
 
@@ -160,9 +169,18 @@ export default function Dashboard() {
               <div className="p-5">
                 {/* Header */}
                 <div className="flex items-start justify-between mb-4">
-                  <div className="min-w-0">
+                  <div className="min-w-0 flex-1">
                     <h3 className="font-mono text-sm font-semibold text-white truncate">{session.name}</h3>
-                    <p className="font-mono text-xs text-muted mt-0.5 truncate">{session.id.slice(0, 8)}...</p>
+                    <div className="flex items-center gap-1.5 mt-0.5">
+                      <p className="font-mono text-xs text-muted truncate">{session.id.slice(0, 8)}...</p>
+                      <button
+                        onClick={() => handleCopyId(session.id, session.name)}
+                        title="Copy Session ID"
+                        className="flex items-center gap-1 text-muted hover:text-green transition-colors"
+                      >
+                        <Copy size={10} />
+                      </button>
+                    </div>
                   </div>
                   <StatusBadge status={session.status} />
                 </div>
