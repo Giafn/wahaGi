@@ -2,7 +2,6 @@ import makeWASocket, {
   DisconnectReason,
   fetchLatestBaileysVersion,
   makeCacheableSignalKeyStore,
-  makeInMemoryStore,
   useMultiFileAuthState
 } from '@whiskeysockets/baileys';
 import { Boom } from '@hapi/boom';
@@ -15,7 +14,7 @@ import pino from 'pino';
 const logger = pino({ level: 'silent' });
 const AUTH_DIR = process.env.AUTH_DIR || './auth';
 
-// In-memory registry: sessionId -> { socket, store, qr }
+// In-memory registry: sessionId -> { socket, qr, status }
 const registry = new Map();
 
 export function getSession(sessionId) {
@@ -87,11 +86,8 @@ async function _initSocket(sessionId, userId) {
   const { state, saveCreds } = await useMultiFileAuthState(authPath);
   const { version } = await fetchLatestBaileysVersion();
 
-  const store = makeInMemoryStore({ logger });
-
   const entry = {
     socket: null,
-    store,
     status: 'connecting',
     qr: null,
     userId,
@@ -112,7 +108,6 @@ async function _initSocket(sessionId, userId) {
     generateHighQualityLinkPreview: false
   });
 
-  store.bind(socket.ev);
   entry.socket = socket;
 
   // ---- QR ----
