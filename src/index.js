@@ -16,6 +16,7 @@ import { chatRoutes } from './routes/chats.js';
 import { ensureDirectories } from './utils/fs.js';
 import { swaggerOptions, swaggerUIOptions } from './swagger.js';
 import { restoreAllSessions } from './services/sessionManager.js';
+import { startMediaCleanup } from './services/mediaCleanup.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -50,7 +51,9 @@ await app.register(multipart, {
 await app.register(staticFiles, {
   root: path.resolve(process.env.MEDIA_DIR || './media'),
   prefix: '/media/files/',
-  decorateReply: false
+  decorateReply: false,
+  dotfiles: 'allow',
+  hidden: true
 });
 
 // Serve frontend
@@ -107,6 +110,10 @@ const start = async () => {
     // Restore all sessions from database
     await restoreAllSessions();
     app.log.info('Sessions restored');
+
+    // Start media cleanup service
+    startMediaCleanup();
+    app.log.info('Media cleanup service started');
 
     const port = parseInt(process.env.PORT || '3000');
     const host = process.env.HOST || '0.0.0.0';

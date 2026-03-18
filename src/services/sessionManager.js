@@ -301,12 +301,15 @@ async function downloadAndSaveMedia(msg, sessionId) {
 
   const ext = getExtension(mimetype);
   const filename = `${Date.now()}-${Math.random().toString(36).substring(7)}.${ext}`;
-  const filePath = path.join(AUTH_DIR, 'media', filename);
 
-  await fs.mkdir(path.join(AUTH_DIR, 'media'), { recursive: true });
+  // Save to MEDIA_DIR (not AUTH_DIR) so it's accessible via static file serving
+  const mediaDir = process.env.MEDIA_DIR || './media';
+  const filePath = path.join(mediaDir, 'incoming', filename);
+
+  await fs.mkdir(path.join(mediaDir, 'incoming'), { recursive: true });
   await fs.writeFile(filePath, buffer);
 
-  const fileUrl = `${process.env.PUBLIC_URL || 'http://localhost:3021'}/media/files/${filename}`;
+  const fileUrl = `${process.env.PUBLIC_URL || 'http://localhost:3021'}/media/files/incoming/${filename}`;
 
   return {
     filename,

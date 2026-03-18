@@ -89,33 +89,41 @@ export async function sendMedia(sessionId, to, buffer, mimetype, filename, capti
 
 /**
  * Send multiple media files sequentially
+ * Caption is only applied to the last media file
  */
 export async function sendMultipleMedia(sessionId, to, files, caption = null, reply_to = null) {
   const results = [];
-  
-  for (const file of files) {
+  const lastIndex = files.length - 1;
+
+  for (let i = 0; i < files.length; i++) {
+    const file = files[i];
     try {
+      // Only add caption to the last media file
+      const fileCaption = (i === lastIndex) ? caption : null;
+
       const result = await sendMedia(
         sessionId,
         to,
         file.buffer,
         file.mimetype,
         file.filename,
-        caption,
+        fileCaption,
         reply_to
       );
       results.push(result);
-      
-      // Delay between messages
-      const delayMin = parseInt(process.env.MEDIA_SEND_DELAY_MIN || '500');
-      const delayMax = parseInt(process.env.MEDIA_SEND_DELAY_MAX || '1000');
-      const delay = Math.floor(Math.random() * (delayMax - delayMin + 1)) + delayMin;
-      await sleep(delay);
+
+      // Delay between messages (except after the last one)
+      if (i < lastIndex) {
+        const delayMin = parseInt(process.env.MEDIA_SEND_DELAY_MIN || '500');
+        const delayMax = parseInt(process.env.MEDIA_SEND_DELAY_MAX || '1000');
+        const delay = Math.floor(Math.random() * (delayMax - delayMin + 1)) + delayMin;
+        await sleep(delay);
+      }
     } catch (err) {
       throw new Error(`Failed to send media ${file.filename}: ${err.message}`);
     }
   }
-  
+
   return results;
 }
 
