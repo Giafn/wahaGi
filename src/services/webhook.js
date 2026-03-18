@@ -4,6 +4,12 @@ import { prisma } from '../db/client.js';
 const RETRY_COUNT = parseInt(process.env.WEBHOOK_RETRY_COUNT || '3');
 const RETRY_DELAY = parseInt(process.env.WEBHOOK_RETRY_DELAY || '2000');
 
+const log = (msg, ...args) => {
+  if (process.env.DEBUG === 'true') {
+    console.log(`[wahaGI Webhook] ${msg}`, ...args);
+  }
+};
+
 export async function dispatchWebhook(sessionId, payload) {
   let session;
   try {
@@ -15,9 +21,14 @@ export async function dispatchWebhook(sessionId, payload) {
     return;
   }
 
-  if (!session?.webhookUrl) return;
+  if (!session?.webhookUrl) {
+    log(`No webhook URL for session ${sessionId}`);
+    return;
+  }
 
   const body = JSON.stringify({ ...payload, session_id: sessionId });
+
+  log(`Sending webhook to ${session.webhookUrl}, event: ${payload.event}`);
 
   for (let attempt = 1; attempt <= RETRY_COUNT; attempt++) {
     try {
@@ -32,12 +43,14 @@ export async function dispatchWebhook(sessionId, payload) {
         signal: AbortSignal.timeout(10000)
       });
 
+      log(`Attempt ${attempt}: ${res.status} ${res.statusText}`);
       if (res.ok) return; // Success
 
       if (attempt < RETRY_COUNT) {
         await sleep(RETRY_DELAY * attempt);
       }
     } catch (err) {
+      log(`Attempt ${attempt} failed: ${err.message}`);
       if (attempt < RETRY_COUNT) {
         await sleep(RETRY_DELAY * attempt);
       }

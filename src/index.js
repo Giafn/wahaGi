@@ -16,6 +16,7 @@ import { mediaRoutes } from './routes/media.js';
 import { chatRoutes } from './routes/chats.js';
 import { ensureDirectories } from './utils/fs.js';
 import { swaggerOptions, swaggerUIOptions } from './swagger.js';
+import { restoreAllSessions } from './services/sessionManager.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -103,6 +104,10 @@ const start = async () => {
     await ensureDirectories();
     await prisma.$connect();
     app.log.info('Database connected');
+
+    // Restore all sessions from database
+    await restoreAllSessions();
+    app.log.info('Sessions restored');
 
     const port = parseInt(process.env.PORT || '3000');
     const host = process.env.HOST || '0.0.0.0';

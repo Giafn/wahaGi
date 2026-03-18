@@ -11,8 +11,15 @@ import { prisma } from '../db/client.js';
 import { dispatchWebhook } from './webhook.js';
 import pino from 'pino';
 
-const logger = pino({ level: 'silent' });
+const logger = pino({ level: process.env.DEBUG === 'true' ? 'info' : 'silent' });
 const AUTH_DIR = process.env.AUTH_DIR || './auth';
+
+// Helper logging - always log to console when DEBUG=true
+const log = (msg, ...args) => {
+  if (process.env.DEBUG === 'true') {
+    console.log(`[wahaGI] ${msg}`, ...args);
+  }
+};
 
 // In-memory registry: sessionId -> { socket, qr, status }
 const registry = new Map();
@@ -58,15 +65,19 @@ export async function restoreAllSessions() {
   // On startup, reload all connected sessions from DB
   try {
     const sessions = await prisma.session.findMany({
-      where: { status: { in: ['connected', 'connecting'] } }
+      where: { status: { in: ['connected', 'qr'] } }
     });
+
+    log(`Restoring ${sessions.length} session(s)...`);
 
     for (const session of sessions) {
       const authPath = path.join(AUTH_DIR, session.id);
       try {
         await fs.access(authPath);
         await _initSocket(session.id, session.userId);
-      } catch {
+        log(`Session ${session.id} restored`);
+      } catch (err) {
+        log(`Failed to restore session ${session.id}: ${err.message}`);
         // Auth dir missing, mark as disconnected
         await prisma.session.update({
           where: { id: session.id },
@@ -115,6 +126,7 @@ async function _initSocket(sessionId, userId) {
     const { connection, lastDisconnect, qr } = update;
 
     if (qr) {
+      log(`📱 QR Code received for session ${sessionId}`);
       entry.qr = qr;
       entry.status = 'qr';
       await prisma.session.update({
@@ -126,6 +138,8 @@ async function _initSocket(sessionId, userId) {
     if (connection === 'close') {
       const reason = new Boom(lastDisconnect?.error)?.output?.statusCode;
       const shouldReconnect = reason !== DisconnectReason.loggedOut;
+
+      log(`❌ Connection closed. Reason: ${reason}, Should reconnect: ${shouldReconnect}`);
 
       entry.status = 'disconnected';
       entry.qr = null;
@@ -140,14 +154,17 @@ async function _initSocket(sessionId, userId) {
       if (shouldReconnect && entry.retryCount < 5) {
         entry.retryCount++;
         const delay = Math.min(1000 * Math.pow(2, entry.retryCount), 30000);
+        log(`🔄 Reconnecting in ${delay}ms (attempt ${entry.retryCount}/5)`);
         setTimeout(() => _initSocket(sessionId, userId), delay);
       } else if (reason === DisconnectReason.loggedOut) {
+        log(`🚫 Session logged out, removing from registry`);
         registry.delete(sessionId);
         await fs.rm(authPath, { recursive: true, force: true }).catch(() => {});
       }
     }
 
     if (connection === 'open') {
+      log(`✅ Connection opened for session ${sessionId}`);
       entry.status = 'connected';
       entry.qr = null;
       entry.retryCount = 0;
@@ -166,17 +183,42 @@ async function _initSocket(sessionId, userId) {
 
   // ---- Incoming messages ----
   socket.ev.on('messages.upsert', async ({ messages, type }) => {
-    if (type !== 'notify') return;
+    log(`📨 Message event: type=${type}, count=${messages.length}`);
+
+    // Only process notify type (new messages)
+    if (type !== 'notify' && type !== 'append') {
+      log(`⚠️ Skipping message type: ${type}`);
+      return;
+    }
 
     for (const msg of messages) {
-      if (msg.key.fromMe) continue;
+      if (msg.key.fromMe) {
+        log(`⏭️ Skipping message from me`);
+        continue;
+      }
 
       const jid = msg.key.remoteJid;
       const msgType = getMessageType(msg);
       const payload = buildWebhookPayload(msg, msgType, sessionId);
 
+      log(`🔔 Dispatching webhook: event=${payload.event}, from=${jid}, type=${msgType}`);
       await dispatchWebhook(sessionId, payload);
     }
+  });
+
+  // Also handle message updates (for status changes)
+  socket.ev.on('messages.update', async (updates) => {
+    log(`📝 Messages update: ${updates?.length} updates`);
+    for (const update of updates) {
+      if (update.update?.status) {
+        log(`📊 Message status update: ${update.key.id} -> ${update.update.status}`);
+      }
+    }
+  });
+
+  // Also listen for m-receipt.update (message status)
+  socket.ev.on('m-receipt.update', async (update) => {
+    log('Receipt update:', update);
   });
 
   return { status: entry.status, qr: entry.qr };
