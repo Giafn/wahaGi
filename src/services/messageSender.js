@@ -9,13 +9,9 @@ const MEDIA_DIR = process.env.MEDIA_DIR || './media';
 
 /**
  * Read all unread messages for a specific chat
- * DISABLED - Only updates database, does NOT send read receipt to WhatsApp to avoid crashes
+ * Only updates database, does NOT send read receipt to WhatsApp to avoid crashes on old CPU servers
  */
 async function readAllMessages(sessionId, jid) {
-  console.log('[readAllMessages] DISABLED - Skipping read receipt');
-  return;
-
-  /* DISABLED - Causes crashes
   const session = getSession(sessionId);
   if (!session || session.status !== 'connected') {
     console.log('[readAllMessages] Session not connected, skipping read');
@@ -63,7 +59,7 @@ async function readAllMessages(sessionId, jid) {
           unreadCount: 0
         }
       });
-      console.log('[readAllMessages] ✅ Updated database unread count (read receipt to WhatsApp disabled)');
+      console.log('[readAllMessages] ✅ Updated database unread count');
     } catch (dbErr) {
       console.error('[readAllMessages] DB update failed:', dbErr.message);
     }
@@ -71,7 +67,6 @@ async function readAllMessages(sessionId, jid) {
     // Non-blocking: don't crash the app, just log error
     console.error('[readAllMessages] Non-critical error (continuing):', err.message);
   }
-  */
 }
 
 /**
@@ -212,7 +207,7 @@ export async function sendMedia(sessionId, to, buffer, mimetype, filename, capti
 
   const jid = to.includes('@') ? to : `${to}@s.whatsapp.net`;
 
-  // Read all unread messages before sending (non-blocking, currently disabled)
+  // Read all unread messages before sending (currently disabled)
   try {
     await readAllMessages(sessionId, jid);
   } catch (err) {
@@ -221,37 +216,53 @@ export async function sendMedia(sessionId, to, buffer, mimetype, filename, capti
 
   const mediaType = getMediaType(mimetype);
   let message;
+  let processedBuffer = buffer;
+
+  // Resize image if too large (for old CPU servers)
+  if (mediaType === 'image' && buffer.length > 500000) { // > 500KB
+    try {
+      console.log('[sendMedia] Resizing image from', Math.round(buffer.length / 1024), 'KB...');
+      processedBuffer = await sharp(buffer)
+        .resize({ width: 1280, height: 1280, fit: 'inside' })
+        .jpeg({ quality: 80 })
+        .toBuffer();
+      console.log('[sendMedia] Image resized to', Math.round(processedBuffer.length / 1024), 'KB');
+    } catch (err) {
+      console.error('[sendMedia] Failed to resize image:', err.message);
+      processedBuffer = buffer; // Fallback to original
+    }
+  }
 
   if (mediaType === 'image') {
     message = {
-      image: buffer,
+      image: processedBuffer,
       mimetype,
       fileName: filename,
       ...(caption ? { caption } : {})
     };
   } else if (mediaType === 'video') {
     message = {
-      video: buffer,
+      video: processedBuffer,
       mimetype,
       fileName: filename,
       ...(caption ? { caption } : {})
     };
   } else if (mediaType === 'audio') {
     message = {
-      audio: buffer,
+      audio: processedBuffer,
       mimetype,
       ptt: mimetype.includes('ogg')
     };
   } else if (mediaType === 'document') {
     message = {
-      document: buffer,
+      document: processedBuffer,
       mimetype,
       fileName: filename,
       ...(caption ? { caption } : {})
     };
   } else {
     message = {
-      document: buffer,
+      document: processedBuffer,
       mimetype,
       fileName: filename
     };
