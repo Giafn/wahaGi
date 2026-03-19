@@ -157,70 +157,77 @@ export async function resolveLID(sessionId, lid, msg = null) {
     }
   }
 
-  // Method 3: Check ALL chats in database for matching phone patterns
-  // This helps resolve group members who have chatted before
-  for (const chat of existingChats) {
-    // Check if this chat's JID matches the LID pattern
-    if (chat.jid.length >= 10 && chat.jid.length < 15) {
-      // Store in cache for future reference
-      if (chat.lid && chat.lid.length >= 15) {
-        updateContactCache(sessionId, chat.lid, chat.jid);
-      }
-    }
-  }
-
-  // Check cache again after populating
+  // Method 3: Check cache
   const cached = getContactByLID(sessionId, lid);
   if (cached && cached.length >= 10 && cached.length < 15) {
     resolved = cached;
-    log(`📞 ✅ Resolved via Method 2.5 (cache): ${lid} → ${resolved}`);
+    log(`📞 ✅ Resolved via Method 3 (cache): ${lid} → ${resolved}`);
     return resolved;
   }
 
-  // Method 4: Check Baileys contacts store - search ALL contacts
-  const session = getSession(sessionId);
-  if (session?.store?.contacts) {
-    const contacts = session.store.contacts || {};
+  // Method 4: Try to get from msg.senderPn directly (most reliable for groups)
+  if (msg?.key?.senderPn) {
+    const senderPn = msg.key.senderPn.split('@')[0].replace(/[^0-9]/g, '');
+    if (senderPn.length >= 10 && senderPn.length < 15) {
+      resolved = senderPn;
+      updateContactCache(sessionId, lid, resolved);
+      log(`📞 ✅ Resolved via Method 4 (senderPn): ${lid} → ${resolved}`);
+      return resolved;
+    }
+  }
 
-    // Search through all contacts for matching LID
-    for (const [jid, contact] of Object.entries(contacts)) {
-      // Check if this contact's JID matches our LID
-      const contactLid = jid.split('@')[0];
-      if (contactLid === lid) {
-        // Found direct match
-        const phoneFields = ['notify', 'name', 'verifiedName', 'subject', 'pushName'];
-        for (const field of phoneFields) {
-          if (contact[field]) {
-            const potential = contact[field].replace(/[^0-9]/g, '');
-            if (potential.length >= 10 && potential.length < 15) {
-              resolved = potential;
-              updateContactCache(sessionId, lid, resolved);
-              log(`📞 ✅ Resolved via Method 4 (direct contact ${jid}): ${lid} → ${resolved}`);
-              return resolved;
-            }
+  // Method 5: Fetch contact from WhatsApp using onWhatsApp()
+  const session = getSession(sessionId);
+  if (session?.socket) {
+    try {
+      log(`🔍 Method 5: Fetching contact from WhatsApp for LID: ${lid}...`);
+
+      // Try to get contact info from Baileys store first
+      const contacts = session.store?.contacts || {};
+      for (const [jid, contact] of Object.entries(contacts)) {
+        const contactLid = jid.split('@')[0];
+        if (contactLid === lid && contact.notify) {
+          const potential = contact.notify.replace(/[^0-9]/g, '');
+          if (potential.length >= 10 && potential.length < 15) {
+            resolved = potential;
+            updateContactCache(sessionId, lid, resolved);
+            log(`📞 ✅ Resolved via Method 5 (contact.notify): ${lid} → ${resolved}`);
+            return resolved;
           }
         }
       }
 
-      // Also check contact.notify for phone number
+      // Try onWhatsApp() to verify and get phone number
+      // This works by checking if a number exists on WhatsApp
+      const jidWithSuffix = `${lid}@s.whatsapp.net`;
+      const result = await session.socket.onWhatsApp(jidWithSuffix);
+
+      if (result && result.length > 0 && result[0].exists) {
+        // Extract phone number from the result
+        const phoneFromJid = result[0].jid.split('@')[0];
+        if (phoneFromJid.length >= 10 && phoneFromJid.length < 15) {
+          resolved = phoneFromJid;
+          updateContactCache(sessionId, lid, resolved);
+          log(`📞 ✅ Resolved via Method 5 (onWhatsApp): ${lid} → ${resolved}`);
+          return resolved;
+        }
+      }
+    } catch (err) {
+      log(`⚠️ Method 5 failed: ${err.message}`);
+    }
+  }
+
+  // Method 6: Populate cache from all existing contacts for future use
+  const session2 = getSession(sessionId);
+  if (session2?.store?.contacts) {
+    const contacts = session2.store.contacts || {};
+    for (const [jid, contact] of Object.entries(contacts)) {
       if (contact.notify) {
         const potential = contact.notify.replace(/[^0-9]/g, '');
         if (potential.length >= 10 && potential.length < 15) {
-          // Cache this for future
-          const contactLidFromJid = jid.split('@')[0];
-          updateContactCache(sessionId, contactLidFromJid, potential);
+          const contactLid = jid.split('@')[0];
+          updateContactCache(sessionId, contactLid, potential);
         }
-      }
-    }
-
-    // Method 5: Try to get from msg.senderPn directly
-    if (msg?.key?.senderPn) {
-      const senderPn = msg.key.senderPn.split('@')[0].replace(/[^0-9]/g, '');
-      if (senderPn.length >= 10 && senderPn.length < 15) {
-        resolved = senderPn;
-        updateContactCache(sessionId, lid, resolved);
-        log(`📞 ✅ Resolved via Method 5 (senderPn): ${lid} → ${resolved}`);
-        return resolved;
       }
     }
   }
