@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from 'react';
 import { useParams } from 'react-router-dom';
-import { ArrowLeft, Send, Paperclip, Smile, Mic } from 'lucide-react';
+import { ArrowLeft, Send, Smile, Mic } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { api } from '../services/api';
 import toast from 'react-hot-toast';
@@ -179,13 +179,6 @@ export default function ChatDetail() {
       {/* Input */}
       <div className="bg-surface border-t border-border p-3">
         <div className="flex items-end gap-2">
-          <button
-            className="p-2 text-muted hover:text-white transition-colors"
-            title="Attach file"
-          >
-            <Paperclip size={20} />
-          </button>
-          
           <div className="flex-1 bg-bg border border-border rounded-lg flex items-center">
             <textarea
               value={messageText}
@@ -200,7 +193,7 @@ export default function ChatDetail() {
               <Smile size={20} />
             </button>
           </div>
-          
+
           <button
             onClick={sendMessage}
             disabled={sending || !messageText.trim()}

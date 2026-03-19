@@ -341,7 +341,7 @@ setInterval(() => {
       }
       processedMessages.set(processKey, Date.now());
 
-      // Skip saving outgoing messages - already saved by sendText/sendMedia
+      // Skip saving outgoing messages - already saved by sendText
       if (isFromMe) {
         log(`⏭️ Skipping outgoing message (already saved)`);
         continue;

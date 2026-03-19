@@ -54,54 +54,11 @@ export const api = {
 
   // Messages
   sendText: (id, to, text, reply_to) => request('POST', `/sessions/${id}/send`, { to, text, reply_to }),
-  sendMedia: (id, formData) => {
-    const token = localStorage.getItem('token');
-    return fetch(`/sessions/${id}/send-media`, {
-      method: 'POST',
-      headers: {
-        'Authorization': `Bearer ${token}`
-      },
-      body: formData
-    }).then(res => {
-      if (res.status === 401) {
-        localStorage.removeItem('token');
-        localStorage.removeItem('user');
-        window.location.href = '/';
-        throw new Error('Unauthorized');
-      }
-      return res.json().then(data => {
-        if (!res.ok) throw new Error(data.error || data.message || `HTTP ${res.status}`);
-        return data;
-      });
-    });
-  },
-  sendMultipleMedia: (id, formData) => {
-    const token = localStorage.getItem('token');
-    return fetch(`/sessions/${id}/send-multiple-media`, {
-      method: 'POST',
-      headers: {
-        'Authorization': `Bearer ${token}`
-      },
-      body: formData
-    }).then(res => {
-      if (res.status === 401) {
-        localStorage.removeItem('token');
-        localStorage.removeItem('user');
-        window.location.href = '/';
-        throw new Error('Unauthorized');
-      }
-      return res.json().then(data => {
-        if (!res.ok) throw new Error(data.error || data.message || `HTTP ${res.status}`);
-        return data;
-      });
-    });
-  },
 
   // Chats
   listChats: (id) => request('GET', `/sessions/${id}/chats`),
   listContacts: (id) => request('GET', `/sessions/${id}/contacts`),
   getChatMessages: (id, jid, limit = 50) => {
-    // Don't encode here - let the request function handle it
     return request('GET', `/sessions/${id}/chats/${jid}/messages`, undefined, false, { limit });
   },
 };
