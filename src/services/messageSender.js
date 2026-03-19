@@ -9,63 +9,24 @@ const MEDIA_DIR = process.env.MEDIA_DIR || './media';
 
 /**
  * Read all unread messages for a specific chat
- * Only updates database, does NOT send read receipt to WhatsApp to avoid crashes on old CPU servers
+ * Lightweight version for old CPU servers - only update database
  */
 async function readAllMessages(sessionId, jid) {
-  const session = getSession(sessionId);
-  if (!session || session.status !== 'connected') {
-    console.log('[readAllMessages] Session not connected, skipping read');
-    return;
-  }
-
-  // Check if socket is available
-  if (!session.socket) {
-    console.log('[readAllMessages] Socket not available, skipping read');
-    return;
-  }
-
   try {
-    // Normalize JID to phone number
     const phoneNumber = jid.replace('@s.whatsapp.net', '');
 
-    // Get unread messages from database (only those with messageId)
-    const unreadMessages = await prisma.chatHistory.findMany({
+    // Simple update without query - just reset unread count
+    await prisma.chat.updateMany({
       where: {
         sessionId,
-        from: phoneNumber,
-        isFromMe: false,
-        messageId: {
-          not: null
-        }
+        jid: phoneNumber
       },
-      orderBy: { timestamp: 'asc' }
+      data: {
+        unreadCount: 0
+      }
     });
-
-    if (unreadMessages.length === 0) {
-      console.log('[readAllMessages] No unread messages to read');
-      return;
-    }
-
-    console.log(`[readAllMessages] Found ${unreadMessages.length} unread messages for ${phoneNumber}`);
-
-    // Update unread count in database only (don't send read receipt to WhatsApp)
-    try {
-      await prisma.chat.updateMany({
-        where: {
-          sessionId,
-          jid: phoneNumber
-        },
-        data: {
-          unreadCount: 0
-        }
-      });
-      console.log('[readAllMessages] ✅ Updated database unread count');
-    } catch (dbErr) {
-      console.error('[readAllMessages] DB update failed:', dbErr.message);
-    }
   } catch (err) {
-    // Non-blocking: don't crash the app, just log error
-    console.error('[readAllMessages] Non-critical error (continuing):', err.message);
+    // Completely ignore errors - this is non-critical
   }
 }
 
@@ -200,6 +161,8 @@ function normalizeJID(jid) {
  * Send single media file
  */
 export async function sendMedia(sessionId, to, buffer, mimetype, filename, caption = null, reply_to = null) {
+  console.log('[sendMedia] START - to:', to, 'size:', Math.round(buffer.length / 1024), 'KB');
+
   const session = getSession(sessionId);
   if (!session || session.status !== 'connected') {
     throw new Error('Session not connected');
@@ -207,11 +170,13 @@ export async function sendMedia(sessionId, to, buffer, mimetype, filename, capti
 
   const jid = to.includes('@') ? to : `${to}@s.whatsapp.net`;
 
-  // Read all unread messages before sending (currently disabled)
+  // Read all unread messages (lightweight, non-blocking)
   try {
+    console.log('[sendMedia] Calling readAllMessages...');
     await readAllMessages(sessionId, jid);
+    console.log('[sendMedia] readAllMessages done');
   } catch (err) {
-    // Ignore
+    console.log('[sendMedia] readAllMessages error (ignored):', err.message);
   }
 
   const mediaType = getMediaType(mimetype);
@@ -219,61 +184,41 @@ export async function sendMedia(sessionId, to, buffer, mimetype, filename, capti
   let processedBuffer = buffer;
 
   // Resize image if too large (for old CPU servers)
-  if (mediaType === 'image' && buffer.length > 500000) { // > 500KB
+  if (mediaType === 'image' && buffer.length > 500000) {
     try {
-      console.log('[sendMedia] Resizing image from', Math.round(buffer.length / 1024), 'KB...');
+      console.log('[sendMedia] Resizing image...');
       processedBuffer = await sharp(buffer)
         .resize({ width: 1280, height: 1280, fit: 'inside' })
         .jpeg({ quality: 80 })
         .toBuffer();
-      console.log('[sendMedia] Image resized to', Math.round(processedBuffer.length / 1024), 'KB');
+      console.log('[sendMedia] Resized to', Math.round(processedBuffer.length / 1024), 'KB');
     } catch (err) {
-      console.error('[sendMedia] Failed to resize image:', err.message);
-      processedBuffer = buffer; // Fallback to original
+      console.error('[sendMedia] Resize failed:', err.message);
+      processedBuffer = buffer;
     }
   }
 
   if (mediaType === 'image') {
-    message = {
-      image: processedBuffer,
-      mimetype,
-      fileName: filename,
-      ...(caption ? { caption } : {})
-    };
+    message = { image: processedBuffer, mimetype, fileName: filename, ...(caption ? { caption } : {}) };
   } else if (mediaType === 'video') {
-    message = {
-      video: processedBuffer,
-      mimetype,
-      fileName: filename,
-      ...(caption ? { caption } : {})
-    };
+    message = { video: processedBuffer, mimetype, fileName: filename, ...(caption ? { caption } : {}) };
   } else if (mediaType === 'audio') {
-    message = {
-      audio: processedBuffer,
-      mimetype,
-      ptt: mimetype.includes('ogg')
-    };
+    message = { audio: processedBuffer, mimetype, ptt: mimetype.includes('ogg') };
   } else if (mediaType === 'document') {
-    message = {
-      document: processedBuffer,
-      mimetype,
-      fileName: filename,
-      ...(caption ? { caption } : {})
-    };
+    message = { document: processedBuffer, mimetype, fileName: filename, ...(caption ? { caption } : {}) };
   } else {
-    message = {
-      document: processedBuffer,
-      mimetype,
-      fileName: filename
-    };
+    message = { document: processedBuffer, mimetype, fileName: filename };
   }
 
+  console.log('[sendMedia] Calling sendMessage...');
   const result = await session.socket.sendMessage(jid, message);
+  console.log('[sendMedia] sendMessage done, id:', result?.key?.id);
 
   if (result?.key?.id) {
     await saveOutgoingMessage(sessionId, jid, caption || `[${mediaType}]`, mediaType);
   }
 
+  console.log('[sendMedia] END');
   return result;
 }
 
