@@ -207,23 +207,32 @@ function normalizeJID(jid) {
  * @param {string} reply_to - Optional reply message ID
  */
 export async function sendMedia(sessionId, to, buffer, mimetype, filename, caption = null, reply_to = null) {
+  console.log('[sendMedia] Starting...');
+
   const session = getSession(sessionId);
+  console.log('[sendMedia] Session:', session ? 'found' : 'not found', 'Status:', session?.status);
+
   if (!session || session.status !== 'connected') {
     throw new Error('Session not connected');
   }
 
   const jid = to.includes('@') ? to : `${to}@s.whatsapp.net`;
+  console.log('[sendMedia] JID:', jid);
 
   // Read all unread messages before sending (non-blocking)
   try {
+    console.log('[sendMedia] Calling readAllMessages...');
     await readAllMessages(sessionId, jid);
+    console.log('[sendMedia] readAllMessages completed');
   } catch (err) {
     console.log('[sendMedia] readAllMessages error (continuing):', err.message);
   }
 
+  console.log('[sendMedia] Determining media type...');
   let message;
   const mediaType = getMediaType(mimetype);
-  
+  console.log('[sendMedia] Media type:', mediaType);
+
   if (mediaType === 'image') {
     message = {
       image: buffer,
@@ -260,17 +269,23 @@ export async function sendMedia(sessionId, to, buffer, mimetype, filename, capti
     };
   }
 
+  console.log('[sendMedia] About to call sendMessage...');
   try {
     const result = await session.socket.sendMessage(jid, message);
+    console.log('[sendMedia] sendMessage completed, result:', result?.key?.id);
 
     // Save outgoing message to chat history
     if (result?.key?.id) {
+      console.log('[sendMedia] Saving outgoing message...');
       await saveOutgoingMessage(sessionId, jid, caption || `[${mediaType}]`, mediaType);
+      console.log('[sendMedia] Message saved');
     }
 
+    console.log('[sendMedia] Returning result');
     return result;
   } catch (err) {
     console.error('[sendMedia] Error sending message:', err.message);
+    console.error('[sendMedia] Stack:', err.stack);
     throw err;
   }
 }
