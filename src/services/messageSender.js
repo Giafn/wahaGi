@@ -9,9 +9,13 @@ const MEDIA_DIR = process.env.MEDIA_DIR || './media';
 
 /**
  * Read all unread messages for a specific chat
- * Note: Only updates database, does NOT send read receipt to WhatsApp to avoid crashes
+ * DISABLED - Only updates database, does NOT send read receipt to WhatsApp to avoid crashes
  */
 async function readAllMessages(sessionId, jid) {
+  console.log('[readAllMessages] DISABLED - Skipping read receipt');
+  return;
+
+  /* DISABLED - Causes crashes
   const session = getSession(sessionId);
   if (!session || session.status !== 'connected') {
     console.log('[readAllMessages] Session not connected, skipping read');
@@ -67,6 +71,7 @@ async function readAllMessages(sessionId, jid) {
     // Non-blocking: don't crash the app, just log error
     console.error('[readAllMessages] Non-critical error (continuing):', err.message);
   }
+  */
 }
 
 /**
