@@ -19,6 +19,10 @@ const MAX_HISTORY = parseInt(process.env.MAX_HISTORY_MESSAGES || '20');
 // Cache for mapping LID to phone number: { [sessionId]: Map<lid, phoneNumber> }
 const contactCache = new Map();
 
+// Persistent cache for resolved LIDs: { [sessionId]: Map<lid, {phone, timestamp}> }
+const lidResolutionCache = new Map();
+const LID_CACHE_TTL = 24 * 60 * 60 * 1000; // 24 hours
+
 /**
  * Normalize JID to consistent format (phone number only)
  * Uses multiple methods to extract correct phone number
@@ -111,9 +115,50 @@ export function getContactByLID(sessionId, lid) {
 }
 
 /**
+ * Get resolved LID from persistent cache
+ */
+export function getCachedLIDResolution(sessionId, lid) {
+  if (!lidResolutionCache.has(sessionId)) return null;
+
+  const cached = lidResolutionCache.get(sessionId).get(lid);
+  if (!cached) return null;
+
+  // Check if cache is still valid (not expired)
+  if (Date.now() - cached.timestamp > LID_CACHE_TTL) {
+    log(`⏰ LID cache expired for ${lid}`);
+    lidResolutionCache.get(sessionId).delete(lid);
+    return null;
+  }
+
+  return cached.phone;
+}
+
+/**
+ * Cache resolved LID persistently
+ */
+export function cacheLIDResolution(sessionId, lid, phoneNumber) {
+  if (!lidResolutionCache.has(sessionId)) {
+    lidResolutionCache.set(sessionId, new Map());
+  }
+  lidResolutionCache.get(sessionId).set(lid, {
+    phone: phoneNumber,
+    timestamp: Date.now()
+  });
+  log(`💾 Cached LID resolution: ${lid} → ${phoneNumber} (24h)`);
+}
+
+/**
  * Resolve LID to phone number using multiple methods
+ * Results are cached for 24 hours to avoid repeated API calls
  */
 export async function resolveLID(sessionId, lid, msg = null) {
+  // Check persistent cache FIRST - only resolve once per LID
+  const cached = getCachedLIDResolution(sessionId, lid);
+  if (cached) {
+    log(`📞 ✅ Resolved from cache: ${lid} → ${cached}`);
+    return cached;
+  }
+
   let resolved = null;
 
   // Method 1: Check recent outgoing messages (last 24 hours)
@@ -157,11 +202,11 @@ export async function resolveLID(sessionId, lid, msg = null) {
     }
   }
 
-  // Method 3: Check cache
-  const cached = getContactByLID(sessionId, lid);
-  if (cached && cached.length >= 10 && cached.length < 15) {
-    resolved = cached;
-    log(`📞 ✅ Resolved via Method 3 (cache): ${lid} → ${resolved}`);
+  // Method 3: Check temporary contact cache
+  const cachedContact = getContactByLID(sessionId, lid);
+  if (cachedContact && cachedContact.length >= 10 && cachedContact.length < 15) {
+    resolved = cachedContact;
+    log(`📞 ✅ Resolved via Method 3 (contact cache): ${lid} → ${resolved}`);
     return resolved;
   }
 
@@ -171,6 +216,7 @@ export async function resolveLID(sessionId, lid, msg = null) {
     if (senderPn.length >= 10 && senderPn.length < 15) {
       resolved = senderPn;
       updateContactCache(sessionId, lid, resolved);
+      cacheLIDResolution(sessionId, lid, resolved); // Cache persistently
       log(`📞 ✅ Resolved via Method 4 (senderPn): ${lid} → ${resolved}`);
       return resolved;
     }
@@ -191,6 +237,7 @@ export async function resolveLID(sessionId, lid, msg = null) {
           if (potential.length >= 10 && potential.length < 15) {
             resolved = potential;
             updateContactCache(sessionId, lid, resolved);
+            cacheLIDResolution(sessionId, lid, resolved); // Cache persistently
             log(`📞 ✅ Resolved via Method 5 (contact.notify): ${lid} → ${resolved}`);
             return resolved;
           }
@@ -198,16 +245,15 @@ export async function resolveLID(sessionId, lid, msg = null) {
       }
 
       // Try onWhatsApp() to verify and get phone number
-      // This works by checking if a number exists on WhatsApp
       const jidWithSuffix = `${lid}@s.whatsapp.net`;
       const result = await session.socket.onWhatsApp(jidWithSuffix);
 
       if (result && result.length > 0 && result[0].exists) {
-        // Extract phone number from the result
         const phoneFromJid = result[0].jid.split('@')[0];
         if (phoneFromJid.length >= 10 && phoneFromJid.length < 15) {
           resolved = phoneFromJid;
           updateContactCache(sessionId, lid, resolved);
+          cacheLIDResolution(sessionId, lid, resolved); // Cache persistently
           log(`📞 ✅ Resolved via Method 5 (onWhatsApp): ${lid} → ${resolved}`);
           return resolved;
         }
