@@ -8,6 +8,72 @@ import { prisma } from '../db/client.js';
 const MEDIA_DIR = process.env.MEDIA_DIR || './media';
 
 /**
+ * Read all unread messages for a specific chat
+ */
+async function readAllMessages(sessionId, jid) {
+  const session = getSession(sessionId);
+  if (!session || session.status !== 'connected') {
+    console.log('[readAllMessages] Session not connected, skipping read');
+    return;
+  }
+
+  try {
+    // Normalize JID to phone number
+    const phoneNumber = jid.replace('@s.whatsapp.net', '');
+
+    // Get unread messages from database (only those with messageId)
+    const unreadMessages = await prisma.chatHistory.findMany({
+      where: {
+        sessionId,
+        from: phoneNumber,
+        isFromMe: false,
+        messageId: {
+          not: null
+        }
+      },
+      orderBy: { timestamp: 'asc' }
+    });
+
+    if (unreadMessages.length === 0) {
+      console.log('[readAllMessages] No unread messages to read');
+      return;
+    }
+
+    // Build message keys for Baileys read receipt
+    // remoteJid must be the actual JID format (with @s.whatsapp.net)
+    const messageKeys = unreadMessages
+      .filter(msg => msg.messageId) // Filter out null messageIds
+      .map(msg => ({
+        remoteJid: jid, // Use the JID passed in (already has @s.whatsapp.net)
+        fromMe: false,
+        id: msg.messageId
+      }));
+
+    if (messageKeys.length === 0) {
+      console.log('[readAllMessages] No valid message keys to read');
+      return;
+    }
+
+    // Send read receipt to WhatsApp using socket.readMessages
+    await session.socket.readMessages(messageKeys);
+    console.log(`[readAllMessages] ✅ Marked ${messageKeys.length} messages as read for ${phoneNumber}`);
+
+    // Update unread count in database
+    await prisma.chat.updateMany({
+      where: {
+        sessionId,
+        jid: phoneNumber
+      },
+      data: {
+        unreadCount: 0
+      }
+    });
+  } catch (err) {
+    console.error('[readAllMessages] Error:', err.message);
+  }
+}
+
+/**
  * Send text message
  */
 export async function sendText(sessionId, to, text, reply_to = null) {
@@ -18,6 +84,9 @@ export async function sendText(sessionId, to, text, reply_to = null) {
 
   // Convert phone number to proper JID format
   const jid = toJID(to);
+
+  // Read all unread messages before sending
+  await readAllMessages(sessionId, jid);
 
   const message = {
     text,
@@ -144,7 +213,10 @@ export async function sendMedia(sessionId, to, buffer, mimetype, filename, capti
   }
 
   const jid = to.includes('@') ? to : `${to}@s.whatsapp.net`;
-  
+
+  // Read all unread messages before sending
+  await readAllMessages(sessionId, jid);
+
   let message;
   const mediaType = getMediaType(mimetype);
   
