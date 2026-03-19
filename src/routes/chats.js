@@ -122,17 +122,17 @@ export async function chatRoutes(fastify) {
     return messages;
   });
 
-  // POST /sessions/:id/chats/:jid/read - Mark chat as read
-  fastify.post('/:id/chats/:jid/read', {
+  // POST /sessions/:id/chats/:phoneNumber/read - Mark chat as read
+  fastify.post('/:id/chats/:phoneNumber/read', {
     schema: {
       tags: ['Chats'],
       security: [{ bearerAuth: [] }],
       params: {
         type: 'object',
-        required: ['id', 'jid'],
+        required: ['id', 'phoneNumber'],
         properties: {
           id: { type: 'string', format: 'uuid' },
-          jid: { type: 'string' }
+          phoneNumber: { type: 'string', description: 'Phone number (e.g., 628123456789)' }
         }
       },
       response: {
@@ -150,12 +150,12 @@ export async function chatRoutes(fastify) {
     });
     if (!session) return reply.code(404).send({ error: 'Session not found' });
 
-    const { jid } = request.params;
+    const { phoneNumber } = request.params;
 
     await prisma.chat.updateMany({
       where: {
         sessionId: session.id,
-        jid
+        jid: phoneNumber
       },
       data: {
         unreadCount: 0

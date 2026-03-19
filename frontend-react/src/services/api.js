@@ -61,4 +61,5 @@ export const api = {
   getChatMessages: (id, jid, limit = 50) => {
     return request('GET', `/sessions/${id}/chats/${jid}/messages`, undefined, false, { limit });
   },
+  markChatAsRead: (id, phoneNumber) => request('POST', `/sessions/${id}/chats/${phoneNumber}/read`),
 };

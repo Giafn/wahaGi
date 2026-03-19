@@ -36,10 +36,19 @@ export default function ChatDetail() {
     }
   };
 
+  const markAsRead = async () => {
+    try {
+      await api.markChatAsRead(id, phoneNumber);
+    } catch (err) {
+      // Ignore error
+    }
+  };
+
   useEffect(() => {
     loadSession();
     loadMessages();
-    
+    markAsRead(); // Mark chat as read when opening
+
     // Poll for new messages every 5 seconds
     const interval = setInterval(loadMessages, 5000);
     return () => clearInterval(interval);
