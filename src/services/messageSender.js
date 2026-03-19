@@ -3,6 +3,7 @@ import { getSession } from './sessionManager.js';
 import { downloadMediaMessage } from '@whiskeysockets/baileys';
 import fs from 'fs/promises';
 import path from 'path';
+import { prisma } from '../db/client.js';
 
 const MEDIA_DIR = process.env.MEDIA_DIR || './media';
 
@@ -15,15 +16,115 @@ export async function sendText(sessionId, to, text, reply_to = null) {
     throw new Error('Session not connected');
   }
 
-  const jid = to.includes('@') ? to : `${to}@s.whatsapp.net`;
-  
+  // Convert phone number to proper JID format
+  const jid = toJID(to);
+
   const message = {
     text,
     ...(reply_to ? { quotedMessageId: reply_to } : {})
   };
 
   const result = await session.socket.sendMessage(jid, message);
+
+  // Save outgoing message to chat history
+  if (result?.key?.id) {
+    await saveOutgoingMessage(sessionId, jid, text, 'text', result.key.id);
+  }
+
   return result;
+}
+
+/**
+ * Convert phone number to proper JID format for sending
+ */
+function toJID(phoneNumber) {
+  if (!phoneNumber) return '';
+  // First normalize to just digits
+  const normalized = normalizeJID(phoneNumber);
+  // Then add @s.whatsapp.net
+  return `${normalized}@s.whatsapp.net`;
+}
+
+/**
+ * Save outgoing message to chat history
+ */
+async function saveOutgoingMessage(sessionId, jid, message, type, messageId = null) {
+  try {
+    // Normalize JID to phone number
+    const normalizedJID = normalizeJID(jid);
+    const lid = jid.split('@')[0]; // Store full JID as lid
+
+    console.log('[saveOutgoingMessage] Saving:', {
+      originalJID: jid,
+      normalizedJID,
+      lid,
+      messageId,
+      message,
+      type
+    });
+
+    await prisma.chatHistory.create({
+      data: {
+        sessionId,
+        messageId,
+        from: normalizedJID,
+        lid: lid !== normalizedJID ? lid : null, // Only store lid if different
+        message,
+        type,
+        isFromMe: true,
+        timestamp: new Date()
+      }
+    });
+
+    console.log('[saveOutgoingMessage] Chat history saved');
+
+    // Update chat list
+    const existingChat = await prisma.chat.findUnique({
+      where: {
+        sessionId_jid: {
+          sessionId,
+          jid: normalizedJID
+        }
+      }
+    });
+
+    if (existingChat) {
+      await prisma.chat.update({
+        where: { id: existingChat.id },
+        data: {
+          lastMessageTime: new Date(),
+          lid: lid !== normalizedJID ? lid : existingChat.lid
+        }
+      });
+      console.log('[saveOutgoingMessage] Updated existing chat');
+    } else {
+      await prisma.chat.create({
+        data: {
+          sessionId,
+          jid: normalizedJID,
+          lid: lid !== normalizedJID ? lid : null,
+          name: normalizedJID,
+          unreadCount: 0,
+          lastMessageTime: new Date()
+        }
+      });
+      console.log('[saveOutgoingMessage] Created new chat');
+    }
+  } catch (err) {
+    console.error('[saveOutgoingMessage] Error:', err.message);
+    console.error('[saveOutgoingMessage] Stack:', err.stack);
+  }
+}
+
+/**
+ * Normalize JID to phone number
+ */
+function normalizeJID(jid) {
+  if (!jid) return '';
+  let phone = jid.split('@')[0];
+  phone = phone.replace(/^\+/, '');
+  phone = phone.replace(/[^0-9]/g, '');
+  return phone;
 }
 
 /**
@@ -84,6 +185,10 @@ export async function sendMedia(sessionId, to, buffer, mimetype, filename, capti
   }
 
   const result = await session.socket.sendMessage(jid, message);
+
+  // Save outgoing message to chat history
+  await saveOutgoingMessage(sessionId, jid, caption || `[${mediaType}]`, mediaType);
+
   return result;
 }
 

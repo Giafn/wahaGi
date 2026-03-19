@@ -6,6 +6,7 @@ import { AuthProvider, useAuth } from './context/AuthContext';
 import Login from './pages/Login';
 import Dashboard from './pages/Dashboard';
 import DeviceDetail from './pages/DeviceDetail';
+import ChatDetail from './pages/ChatDetail';
 import './index.css';
 
 function PrivateRoute({ children }) {
@@ -32,6 +33,7 @@ function App() {
           <Route path="/" element={<PublicRoute><Login /></PublicRoute>} />
           <Route path="/dashboard" element={<PrivateRoute><Dashboard /></PrivateRoute>} />
           <Route path="/device/:id" element={<PrivateRoute><DeviceDetail /></PrivateRoute>} />
+          <Route path="/device/:id/chat/:jid" element={<PrivateRoute><ChatDetail /></PrivateRoute>} />
           <Route path="*" element={<Navigate to="/dashboard" replace />} />
         </Routes>
       </BrowserRouter>

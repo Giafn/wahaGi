@@ -396,19 +396,40 @@ export default function DeviceDetail() {
           ) : chats.length === 0 ? (
             <div className="border border-dashed border-border p-12 text-center">
               <p className="font-mono text-xs text-muted">No chats available</p>
+              <p className="font-mono text-xs text-muted mt-2">Send or receive messages to see chats</p>
             </div>
           ) : (
             <div className="border border-border divide-y divide-border">
               {chats.map(chat => (
-                <div key={chat.id} className="flex items-center justify-between px-4 py-3 hover:bg-white/5 transition-colors">
-                  <div className="min-w-0">
-                    <p className="font-mono text-xs text-white truncate">{chat.name || chat.id}</p>
-                    <p className="font-mono text-xs text-muted">{chat.id}</p>
+                <div
+                  key={chat.id}
+                  onClick={() => {
+                    // Normalize JID to phone number for consistent routing
+                    const phone = chat.id.includes('@') ? chat.id.split('@')[0] : chat.id;
+                    navigate(`/device/${id}/chat/${phone}`);
+                  }}
+                  className="flex items-center justify-between px-4 py-3 hover:bg-white/5 transition-colors cursor-pointer"
+                >
+                  <div className="min-w-0 flex-1">
+                    <div className="flex items-center gap-2">
+                      <p className="font-mono text-xs text-white truncate">{chat.name || chat.id.split('@')[0]}</p>
+                      {chat.unread_count > 0 && (
+                        <span className="bg-green text-black font-mono text-xs font-bold px-1.5 py-0.5 rounded">
+                          {chat.unread_count}
+                        </span>
+                      )}
+                    </div>
+                    {chat.last_message && (
+                      <p className="font-mono text-xs text-muted truncate mt-1">
+                        {chat.last_message.is_from_me && '📤 '}
+                        {chat.last_message.type !== 'text' ? `[${chat.last_message.type}]` : chat.last_message.text}
+                      </p>
+                    )}
                   </div>
-                  {chat.unread_count > 0 && (
-                    <span className="bg-green text-black font-mono text-xs font-bold px-2 py-0.5 ml-2 flex-shrink-0">
-                      {chat.unread_count}
-                    </span>
+                  {chat.last_chat && (
+                    <p className="font-mono text-xs text-muted ml-2">
+                      {new Date(chat.last_chat).toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' })}
+                    </p>
                   )}
                 </div>
               ))}

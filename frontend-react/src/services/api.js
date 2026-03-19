@@ -5,16 +5,21 @@ function getToken() {
   return localStorage.getItem('token');
 }
 
-async function request(method, path, body, isFormData = false) {
+async function request(method, path, body, isFormData = false, queryParams = {}) {
   const headers = {};
   const token = getToken();
   if (token) headers['Authorization'] = `Bearer ${token}`;
   if (!isFormData) headers['Content-Type'] = 'application/json';
 
+  // Build query string
+  const queryString = Object.keys(queryParams).length > 0
+    ? '?' + new URLSearchParams(queryParams).toString()
+    : '';
+
   // Don't send body for GET/DELETE, or if body is empty object
   const sendBody = body && Object.keys(body).length > 0;
 
-  const res = await fetch(`${BASE}${path}`, {
+  const res = await fetch(`${BASE}${path}${queryString}`, {
     method,
     headers,
     body: sendBody ? (isFormData ? body : JSON.stringify(body)) : undefined,
@@ -95,4 +100,8 @@ export const api = {
   // Chats
   listChats: (id) => request('GET', `/sessions/${id}/chats`),
   listContacts: (id) => request('GET', `/sessions/${id}/contacts`),
+  getChatMessages: (id, jid, limit = 50) => {
+    // Don't encode here - let the request function handle it
+    return request('GET', `/sessions/${id}/chats/${jid}/messages`, undefined, false, { limit });
+  },
 };

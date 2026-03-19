@@ -46,3 +46,40 @@ model Media {
 
   @@map("media")
 }
+
+model ChatHistory {
+  id        String   @id @default(uuid())
+  sessionId String   @map("session_id")
+  messageId String?  @map("message_id") // WhatsApp message ID for edit tracking
+  from      String   // Phone number or LID
+  lid       String?  // WhatsApp LID (optional, for internal identification)
+  message   String
+  type      String   @default("text") @map("message_type")
+  isFromMe  Boolean  @default(false) @map("is_from_me")
+  timestamp DateTime
+  createdAt DateTime @default(now()) @map("created_at")
+
+  @@index([sessionId, from])
+  @@index([sessionId, timestamp])
+  @@index([from])
+  @@index([lid])
+  @@index([messageId])
+  @@map("chat_history")
+}
+
+model Chat {
+  id         String   @id @default(uuid())
+  sessionId  String   @map("session_id")
+  jid        String   // Phone number (for API)
+  lid        String?  // WhatsApp LID (for internal use)
+  name       String?
+  unreadCount Int     @default(0) @map("unread_count")
+  lastMessageTime DateTime? @map("last_message_time")
+  createdAt  DateTime @default(now()) @map("created_at")
+  updatedAt  DateTime @updatedAt
+
+  @@unique([sessionId, jid])
+  @@unique([sessionId, lid])
+  @@index([sessionId])
+  @@map("chats")
+}

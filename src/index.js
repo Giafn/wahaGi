@@ -13,6 +13,7 @@ import { authRoutes } from './routes/auth.js';
 import { sessionRoutes } from './routes/sessions.js';
 import { messageRoutes } from './routes/messages.js';
 import { chatRoutes } from './routes/chats.js';
+import { contactRoutes } from './routes/contacts.js';
 import { ensureDirectories } from './utils/fs.js';
 import { swaggerOptions, swaggerUIOptions } from './swagger.js';
 import { restoreAllSessions } from './services/sessionManager.js';
@@ -78,6 +79,7 @@ await app.register(authRoutes, { prefix: '/auth' });
 await app.register(sessionRoutes, { prefix: '/sessions' });
 await app.register(messageRoutes, { prefix: '/sessions' });
 await app.register(chatRoutes, { prefix: '/sessions' });
+await app.register(contactRoutes, { prefix: '/contacts' });
 
 // Health check
 app.get('/health', {
