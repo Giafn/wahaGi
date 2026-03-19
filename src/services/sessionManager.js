@@ -319,15 +319,16 @@ setInterval(() => {
 
   // ---- Incoming messages ----
   socket.ev.on('messages.upsert', async ({ messages, type }) => {
-    log(`📨 Message event: type=${type}, count=${messages.length}`);
+    try {
+      log(`📨 Message event: type=${type}, count=${messages.length}`);
 
-    // Only process notify/append type (new messages)
-    if (type !== 'notify' && type !== 'append') {
-      log(`⚠️ Skipping message type: ${type}`);
-      return;
-    }
+      // Only process notify/append type (new messages)
+      if (type !== 'notify' && type !== 'append') {
+        log(`⚠️ Skipping message type: ${type}`);
+        return;
+      }
 
-    for (const msg of messages) {
+      for (const msg of messages) {
       const msgId = msg.key?.id;
       const jid = msg.key.remoteJid;
       const msgType = getMessageType(msg);
@@ -454,57 +455,69 @@ setInterval(() => {
       log(`🔔 Dispatching webhook: event=${payload.event}, from=${jid}, phone=${phoneNumber}, type=${msgType}`);
       await dispatchWebhook(sessionId, payload);
     }
+  } catch (err) {
+    console.error('[messages.upsert] Error:', err.message);
+    console.error('[messages.upsert] Stack:', err.stack);
+  }
   });
 
   // ---- Handle message edits ----
   socket.ev.on('messages.update', async (updates) => {
-    log(`📝 Messages update: ${updates?.length} updates`);
+    try {
+      log(`📝 Messages update: ${updates?.length} updates`);
 
-    for (const update of updates) {
-      if (!update.update?.message) continue;
+      for (const update of updates) {
+        if (!update.update?.message) continue;
 
-      const msgId = update.key?.id;
-      const jid = update.key?.remoteJid;
-      const isFromMe = update.key?.fromMe;
+        const msgId = update.key?.id;
+        const jid = update.key?.remoteJid;
+        const isFromMe = update.key?.fromMe;
 
-      log(`✏️ Message edited: id=${msgId}, from=${jid}, isFromMe=${isFromMe}`);
+        log(`✏️ Message edited: id=${msgId}, from=${jid}, isFromMe=${isFromMe}`);
 
-      // Update message in database
-      try {
-        const updatedMessage = update.update.message;
-        const messageText = updatedMessage?.conversation ||
-                           updatedMessage?.extendedTextMessage?.text ||
-                           '[Edited media/caption]';
+        // Update message in database
+        try {
+          const updatedMessage = update.update.message;
+          const messageText = updatedMessage?.conversation ||
+                             updatedMessage?.extendedTextMessage?.text ||
+                             '[Edited media/caption]';
 
-        // Find and update the message in database
-        const existingMsg = await prisma.chatHistory.findFirst({
-          where: {
-            sessionId,
-            message_id: msgId
-          }
-        });
-
-        if (existingMsg) {
-          await prisma.chatHistory.update({
-            where: { id: existingMsg.id },
-            data: {
-              message: `${messageText} (edited)`,
-              // Optionally add edited_at field if you add it to schema
+          // Find and update the message in database
+          const existingMsg = await prisma.chatHistory.findFirst({
+            where: {
+              sessionId,
+              message_id: msgId
             }
           });
-          log(`✅ Updated message ${msgId} in database`);
-        } else {
-          log(`⚠️ Message ${msgId} not found in DB, skipping update`);
+
+          if (existingMsg) {
+            await prisma.chatHistory.update({
+              where: { id: existingMsg.id },
+              data: {
+                message: `${messageText} (edited)`,
+                // Optionally add edited_at field if you add it to schema
+              }
+            });
+            log(`✅ Updated message ${msgId} in database`);
+          } else {
+            log(`⚠️ Message ${msgId} not found in DB, skipping update`);
+          }
+        } catch (err) {
+          log(`❌ Error updating message: ${err.message}`);
         }
-      } catch (err) {
-        log(`❌ Error updating message: ${err.message}`);
       }
+    } catch (err) {
+      console.error('[messages.update] Error:', err.message);
     }
   });
 
   // Also listen for m-receipt.update (message status)
   socket.ev.on('m-receipt.update', async (update) => {
-    log('Receipt update:', update);
+    try {
+      log('Receipt update:', update);
+    } catch (err) {
+      console.error('[m-receipt.update] Error:', err.message);
+    }
   });
 
   return { status: entry.status, qr: entry.qr };

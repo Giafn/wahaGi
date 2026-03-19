@@ -297,12 +297,19 @@ export async function sendMedia(sessionId, to, buffer, mimetype, filename, capti
     };
   }
 
-  const result = await session.socket.sendMessage(jid, message);
+  try {
+    const result = await session.socket.sendMessage(jid, message);
 
-  // Save outgoing message to chat history
-  await saveOutgoingMessage(sessionId, jid, caption || `[${mediaType}]`, mediaType);
+    // Save outgoing message to chat history
+    if (result?.key?.id) {
+      await saveOutgoingMessage(sessionId, jid, caption || `[${mediaType}]`, mediaType);
+    }
 
-  return result;
+    return result;
+  } catch (err) {
+    console.error('[sendMedia] Error sending message:', err.message);
+    throw err;
+  }
 }
 
 /**
@@ -313,9 +320,13 @@ export async function sendMultipleMedia(sessionId, to, files, caption = null, re
   const results = [];
   const lastIndex = files.length - 1;
 
+  console.log('[SEND-MULTIPLE] Starting to send', files.length, 'media files');
+
   for (let i = 0; i < files.length; i++) {
     const file = files[i];
     try {
+      console.log('[SEND-MULTIPLE] Sending file', i + 1, 'of', files.length, ':', file.filename);
+
       // Only add caption to the last media file
       const fileCaption = (i === lastIndex) ? caption : null;
 
@@ -329,6 +340,7 @@ export async function sendMultipleMedia(sessionId, to, files, caption = null, re
         reply_to
       );
       results.push(result);
+      console.log('[SEND-MULTIPLE] File', i + 1, 'sent successfully');
 
       // Delay between messages (except after the last one)
       if (i < lastIndex) {
@@ -338,10 +350,13 @@ export async function sendMultipleMedia(sessionId, to, files, caption = null, re
         await sleep(delay);
       }
     } catch (err) {
-      throw new Error(`Failed to send media ${file.filename}: ${err.message}`);
+      console.error('[SEND-MULTIPLE] Failed to send file', i + 1, ':', err.message);
+      // Continue with next file instead of throwing
+      // throw new Error(`Failed to send media ${file.filename}: ${err.message}`);
     }
   }
 
+  console.log('[SEND-MULTIPLE] Completed sending', results.length, 'of', files.length, 'files');
   return results;
 }
 
