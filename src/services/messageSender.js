@@ -1,5 +1,5 @@
 import makeWASocket from '@whiskeysockets/baileys';
-import { getSession } from './sessionManager.js';
+import { getSession, normalizeJID } from './sessionManager.js';
 import { downloadMediaMessage } from '@whiskeysockets/baileys';
 import fs from 'fs/promises';
 import path from 'path';
@@ -8,16 +8,15 @@ import { prisma } from '../db/client.js';
 const MEDIA_DIR = process.env.MEDIA_DIR || './media';
 
 /**
- * Send text message
+ * Send text message using LID
  */
-export async function sendText(sessionId, to, text, reply_to = null) {
+export async function sendText(sessionId, lid, text, reply_to = null) {
   const session = getSession(sessionId);
   if (!session || session.status !== 'connected') {
     throw new Error('Session not connected');
   }
 
-  // Convert phone number to proper JID format
-  const jid = toJID(to);
+  const jid = toJID(lid);
 
   const message = {
     text,
@@ -26,49 +25,45 @@ export async function sendText(sessionId, to, text, reply_to = null) {
 
   const result = await session.socket.sendMessage(jid, message);
 
-  // Save outgoing message to chat history
   if (result?.key?.id) {
-    await saveOutgoingMessage(sessionId, jid, text, 'text', result.key.id);
+    await saveOutgoingMessage(sessionId, jid, text, 'text', result.key.id, lid);
   }
 
   return result;
 }
 
 /**
- * Convert phone number to proper JID format for sending
+ * Convert LID to proper JID format for sending
  */
-function toJID(phoneNumber) {
-  if (!phoneNumber) return '';
-  // First normalize to just digits
-  const normalized = normalizeJID(phoneNumber);
-  // Then add @s.whatsapp.net
+function toJID(lid) {
+  if (!lid) return '';
+
+  if (lid.includes('@')) {
+    return lid;
+  }
+
+  if (lid.includes('-') || (lid.length >= 15 && /^\d+$/.test(lid))) {
+    return `${lid}@g.us`;
+  }
+
+  const normalized = lid.replace(/[^0-9]/g, '');
   return `${normalized}@s.whatsapp.net`;
 }
 
 /**
- * Save outgoing message to chat history
+ * Save outgoing message to chat history with LID
  */
-async function saveOutgoingMessage(sessionId, jid, message, type, messageId = null) {
+async function saveOutgoingMessage(sessionId, jid, message, type, messageId = null, lid = null) {
   try {
-    // Normalize JID to phone number
-    const normalizedJID = normalizeJID(jid);
-    const lid = jid.split('@')[0]; // Store full JID as lid
-
-    console.log('[saveOutgoingMessage] Saving:', {
-      originalJID: jid,
-      normalizedJID,
-      lid,
-      messageId,
-      message,
-      type
-    });
+    if (!lid) {
+      lid = jid.split('@')[0];
+    }
 
     await prisma.chatHistory.create({
       data: {
         sessionId,
         messageId,
-        from: normalizedJID,
-        lid: lid !== normalizedJID ? lid : null, // Only store lid if different
+        from: lid,
         message,
         type,
         isFromMe: true,
@@ -76,14 +71,11 @@ async function saveOutgoingMessage(sessionId, jid, message, type, messageId = nu
       }
     });
 
-    console.log('[saveOutgoingMessage] Chat history saved');
-
-    // Update chat list
     const existingChat = await prisma.chat.findUnique({
       where: {
-        sessionId_jid: {
+        sessionId_lid: {
           sessionId,
-          jid: normalizedJID
+          lid
         }
       }
     });
@@ -92,158 +84,23 @@ async function saveOutgoingMessage(sessionId, jid, message, type, messageId = nu
       await prisma.chat.update({
         where: { id: existingChat.id },
         data: {
-          lastMessageTime: new Date(),
-          lid: lid !== normalizedJID ? lid : existingChat.lid
+          lastMessageTime: new Date()
         }
       });
-      console.log('[saveOutgoingMessage] Updated existing chat');
     } else {
       await prisma.chat.create({
         data: {
           sessionId,
-          jid: normalizedJID,
-          lid: lid !== normalizedJID ? lid : null,
-          name: normalizedJID,
+          lid,
+          name: lid,
           unreadCount: 0,
           lastMessageTime: new Date()
         }
       });
-      console.log('[saveOutgoingMessage] Created new chat');
     }
   } catch (err) {
     console.error('[saveOutgoingMessage] Error:', err.message);
-    console.error('[saveOutgoingMessage] Stack:', err.stack);
   }
-}
-
-/**
- * Normalize JID to phone number
- */
-function normalizeJID(jid) {
-  if (!jid) return '';
-  let phone = jid.split('@')[0];
-  phone = phone.replace(/^\+/, '');
-  phone = phone.replace(/[^0-9]/g, '');
-  return phone;
-}
-
-/**
- * Send single media file
- * @param {string} sessionId - Session ID
- * @param {string} to - Phone number
- * @param {Buffer} buffer - File buffer
- * @param {string} mimetype - MIME type
- * @param {string} filename - Original filename
- * @param {string} caption - Optional caption
- * @param {string} reply_to - Optional reply message ID
- */
-export async function sendMedia(sessionId, to, buffer, mimetype, filename, caption = null, reply_to = null) {
-  const session = getSession(sessionId);
-  if (!session || session.status !== 'connected') {
-    throw new Error('Session not connected');
-  }
-
-  const jid = to.includes('@') ? to : `${to}@s.whatsapp.net`;
-  
-  let message;
-  const mediaType = getMediaType(mimetype);
-  
-  if (mediaType === 'image') {
-    message = {
-      image: buffer,
-      mimetype,
-      fileName: filename,
-      ...(caption ? { caption } : {})
-    };
-  } else if (mediaType === 'video') {
-    message = {
-      video: buffer,
-      mimetype,
-      fileName: filename,
-      ...(caption ? { caption } : {})
-    };
-  } else if (mediaType === 'audio') {
-    message = {
-      audio: buffer,
-      mimetype,
-      ptt: mimetype.includes('ogg')
-    };
-  } else if (mediaType === 'document') {
-    message = {
-      document: buffer,
-      mimetype,
-      fileName: filename,
-      ...(caption ? { caption } : {})
-    };
-  } else {
-    // Default to document
-    message = {
-      document: buffer,
-      mimetype,
-      fileName: filename
-    };
-  }
-
-  const result = await session.socket.sendMessage(jid, message);
-
-  // Save outgoing message to chat history
-  await saveOutgoingMessage(sessionId, jid, caption || `[${mediaType}]`, mediaType);
-
-  return result;
-}
-
-/**
- * Send multiple media files sequentially
- * Caption is only applied to the last media file
- */
-export async function sendMultipleMedia(sessionId, to, files, caption = null, reply_to = null) {
-  const results = [];
-  const lastIndex = files.length - 1;
-
-  for (let i = 0; i < files.length; i++) {
-    const file = files[i];
-    try {
-      // Only add caption to the last media file
-      const fileCaption = (i === lastIndex) ? caption : null;
-
-      const result = await sendMedia(
-        sessionId,
-        to,
-        file.buffer,
-        file.mimetype,
-        file.filename,
-        fileCaption,
-        reply_to
-      );
-      results.push(result);
-
-      // Delay between messages (except after the last one)
-      if (i < lastIndex) {
-        const delayMin = parseInt(process.env.MEDIA_SEND_DELAY_MIN || '500');
-        const delayMax = parseInt(process.env.MEDIA_SEND_DELAY_MAX || '1000');
-        const delay = Math.floor(Math.random() * (delayMax - delayMin + 1)) + delayMin;
-        await sleep(delay);
-      }
-    } catch (err) {
-      throw new Error(`Failed to send media ${file.filename}: ${err.message}`);
-    }
-  }
-
-  return results;
-}
-
-/**
- * Get media type from mimetype
- */
-function getMediaType(mimetype) {
-  if (mimetype.startsWith('image/')) return 'image';
-  if (mimetype.startsWith('video/')) return 'video';
-  if (mimetype.startsWith('audio/')) return 'audio';
-  return 'document';
-}
-
-function sleep(ms) {
-  return new Promise(resolve => setTimeout(resolve, ms));
 }
 
 /**
@@ -273,16 +130,16 @@ export async function downloadAndSaveMedia(msg, sessionId) {
                      msg.message?.documentMessage?.mimetype ||
                      msg.message?.audioMessage?.mimetype ||
                      'application/octet-stream';
-    
+
     const ext = getExtension(mimetype);
     const filename = `${Date.now()}-${Math.random().toString(36).substring(7)}.${ext}`;
     const filePath = path.join(MEDIA_DIR, filename);
-    
+
     await fs.mkdir(MEDIA_DIR, { recursive: true });
     await fs.writeFile(filePath, buffer);
-    
+
     const fileUrl = `${process.env.PUBLIC_URL || 'http://localhost:3000'}/media/files/${filename}`;
-    
+
     return {
       filename,
       filePath,

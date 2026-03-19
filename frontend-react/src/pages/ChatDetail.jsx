@@ -1,12 +1,12 @@
 import { useState, useEffect, useRef } from 'react';
 import { useParams } from 'react-router-dom';
-import { ArrowLeft, Send, Paperclip, Smile, Mic } from 'lucide-react';
+import { ArrowLeft, Send, Smile, Mic } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { api } from '../services/api';
 import toast from 'react-hot-toast';
 
 export default function ChatDetail() {
-  const { id, jid } = useParams();
+  const { id, lid } = useParams();
   const navigate = useNavigate();
   const [session, setSession] = useState(null);
   const [messages, setMessages] = useState([]);
@@ -17,7 +17,7 @@ export default function ChatDetail() {
 
   const loadMessages = async () => {
     try {
-      const data = await api.getChatMessages(id, jid, 50);
+      const data = await api.getChatMessages(id, lid, 50);
       setMessages(data);
     } catch (err) {
       toast.error(err.message);
@@ -36,14 +36,23 @@ export default function ChatDetail() {
     }
   };
 
+  const markAsRead = async () => {
+    try {
+      await api.markChatAsRead(id, lid);
+    } catch (err) {
+      // Ignore error
+    }
+  };
+
   useEffect(() => {
     loadSession();
     loadMessages();
-    
+    markAsRead(); // Mark chat as read when opening
+
     // Poll for new messages every 5 seconds
     const interval = setInterval(loadMessages, 5000);
     return () => clearInterval(interval);
-  }, [id, jid]);
+  }, [id, lid]);
 
   useEffect(() => {
     // Scroll to bottom when new messages arrive
@@ -52,10 +61,10 @@ export default function ChatDetail() {
 
   const sendMessage = async () => {
     if (!messageText.trim()) return;
-    
+
     setSending(true);
     try {
-      await api.sendText(id, jid.split('@')[0], messageText);
+      await api.sendText(id, lid, messageText);
       setMessageText('');
       await loadMessages();
       toast.success('Message sent');
@@ -85,14 +94,12 @@ export default function ChatDetail() {
     const now = new Date();
     const diff = now - date;
     const days = Math.floor(diff / (1000 * 60 * 60 * 24));
-    
+
     if (days === 0) return 'Today';
     if (days === 1) return 'Yesterday';
     if (days < 7) return date.toLocaleDateString('id-ID', { weekday: 'long' });
     return date.toLocaleDateString('id-ID', { day: 'numeric', month: 'short', year: 'numeric' });
   };
-
-  const phoneNumber = jid?.split('@')[0] || '';
 
   return (
     <div className="h-screen flex flex-col bg-bg">
@@ -105,7 +112,7 @@ export default function ChatDetail() {
           <ArrowLeft size={20} />
         </button>
         <div className="flex-1">
-          <h2 className="font-mono text-sm font-semibold text-white">{phoneNumber}</h2>
+          <h2 className="font-mono text-sm font-semibold text-white">{lid}</h2>
           <p className="font-mono text-xs text-muted">{session?.status === 'connected' ? 'Connected' : 'Disconnected'}</p>
         </div>
       </header>
@@ -179,13 +186,6 @@ export default function ChatDetail() {
       {/* Input */}
       <div className="bg-surface border-t border-border p-3">
         <div className="flex items-end gap-2">
-          <button
-            className="p-2 text-muted hover:text-white transition-colors"
-            title="Attach file"
-          >
-            <Paperclip size={20} />
-          </button>
-          
           <div className="flex-1 bg-bg border border-border rounded-lg flex items-center">
             <textarea
               value={messageText}
@@ -200,7 +200,7 @@ export default function ChatDetail() {
               <Smile size={20} />
             </button>
           </div>
-          
+
           <button
             onClick={sendMessage}
             disabled={sending || !messageText.trim()}

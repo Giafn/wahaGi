@@ -44,7 +44,7 @@ export async function dispatchWebhook(sessionId, payload) {
       });
 
       log(`Attempt ${attempt}: ${res.status} ${res.statusText}`);
-      if (res.ok) return; // Success
+      if (res.ok) return;
 
       if (attempt < RETRY_COUNT) {
         await sleep(RETRY_DELAY * attempt);
@@ -56,7 +56,6 @@ export async function dispatchWebhook(sessionId, payload) {
       }
     }
   }
-  // After all retries, silently fail (logged above)
 }
 
 function sleep(ms) {

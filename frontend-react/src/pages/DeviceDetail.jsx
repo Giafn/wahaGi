@@ -1,6 +1,6 @@
-import { useState, useEffect, useCallback, useRef } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { ArrowLeft, Save, QrCode, Send, Globe, MessageSquare, RefreshCw, Trash2, Copy } from 'lucide-react';
+import { ArrowLeft, Save, QrCode, Globe, RefreshCw, Trash2, Copy } from 'lucide-react';
 import toast from 'react-hot-toast';
 import Layout from '../components/Layout';
 import StatusBadge from '../components/StatusBadge';
@@ -20,14 +20,8 @@ export default function DeviceDetail() {
   const [savingWebhook, setSavingWebhook] = useState(false);
 
   // Send test form
-  const [sendForm, setSendForm] = useState({ to: '', text: '', media: [] });
+  const [sendForm, setSendForm] = useState({ to: '', text: '' });
   const [sending, setSending] = useState(false);
-  const [sendMode, setSendMode] = useState('text'); // 'text' or 'media'
-  const fileInputRef = useRef(null);
-
-  // Chats
-  const [chats, setChats] = useState([]);
-  const [chatsLoading, setChatsLoading] = useState(false);
 
   const load = useCallback(async () => {
     try {
@@ -48,22 +42,6 @@ export default function DeviceDetail() {
     return () => clearInterval(interval);
   }, [load]);
 
-  const loadChats = async () => {
-    setChatsLoading(true);
-    try {
-      const data = await api.listChats(id);
-      setChats(data);
-    } catch (err) {
-      toast.error(err.message);
-    } finally {
-      setChatsLoading(false);
-    }
-  };
-
-  useEffect(() => {
-    if (activeTab === 'chats') loadChats();
-  }, [activeTab]);
-
   const saveWebhook = async () => {
     if (!webhookUrl) { toast.error('URL required'); return; }
     setSavingWebhook(true);
@@ -79,31 +57,15 @@ export default function DeviceDetail() {
   };
 
   const sendTest = async () => {
-    if (!sendForm.to || (!sendForm.text && sendForm.media.length === 0)) {
-      toast.error('To and message/media required');
+    if (!sendForm.to || !sendForm.text) {
+      toast.error('To and message required');
       return;
     }
     setSending(true);
     try {
-      if (sendMode === 'text') {
-        const result = await api.sendText(id, sendForm.to, sendForm.text);
-        toast.success(`Sent! ID: ${result.message_id?.slice(0, 8)}...`);
-        setSendForm(f => ({ ...f, text: '' }));
-      } else if (sendMode === 'media' && sendForm.media.length > 0) {
-        const formData = new FormData();
-        formData.append('to', sendForm.to);
-        formData.append('caption', sendForm.text || '');
-
-        // Append all files
-        sendForm.media.forEach(file => {
-          formData.append('files', file);
-        });
-
-        const result = await api.sendMultipleMedia(id, formData);
-        toast.success(`Sent ${result.sent} media!`);
-        setSendForm(f => ({ ...f, text: '', media: [] }));
-        if (fileInputRef.current) fileInputRef.current.value = '';
-      }
+      const result = await api.sendText(id, sendForm.to, sendForm.text);
+      toast.success(`Sent! ID: ${result.message_id?.slice(0, 8)}...`);
+      setSendForm(f => ({ ...f, text: '' }));
     } catch (err) {
       toast.error(err.message);
     } finally {
@@ -143,8 +105,7 @@ export default function DeviceDetail() {
 
   const TABS = [
     { id: 'webhook', label: 'Webhook', icon: Globe },
-    { id: 'send', label: 'Send Test', icon: Send },
-    { id: 'chats', label: 'Chats', icon: MessageSquare },
+    { id: 'send', label: 'Send Test', icon: QrCode },
   ];
 
   if (loading) return (
@@ -270,9 +231,11 @@ export default function DeviceDetail() {
   "event": "message.received",
   "session_id": "${id}",
   "from": "628xxx@s.whatsapp.net",
+  "is_group": false,
+  "message_id": "ABC123",
   "type": "text",
-  "text": "Hello!",
-  "timestamp": 1710000000
+  "timestamp": 1710000000,
+  "text": "Hello!"
 }`}
             </pre>
           </div>
@@ -288,153 +251,36 @@ export default function DeviceDetail() {
             </div>
           )}
 
-          {/* Mode toggle */}
-          <div className="flex gap-2 mb-6 border-b border-border">
-            <button
-              onClick={() => setSendMode('text')}
-              className={`flex-1 font-mono text-xs py-3 transition-colors ${
-                sendMode === 'text'
-                  ? 'text-green border-b-2 border-green bg-green/5'
-                  : 'text-muted hover:text-white'
-              }`}
-            >
-              📝 Text Message
-            </button>
-            <button
-              onClick={() => setSendMode('media')}
-              className={`flex-1 font-mono text-xs py-3 transition-colors ${
-                sendMode === 'media'
-                  ? 'text-green border-b-2 border-green bg-green/5'
-                  : 'text-muted hover:text-white'
-              }`}
-            >
-              📎 Media File
-            </button>
-          </div>
-
           <div className="space-y-4">
             <div>
-              <label className="font-mono text-xs text-muted tracking-widest uppercase block mb-2">To (phone number)</label>
+              <label className="font-mono text-xs text-muted tracking-widest uppercase block mb-2">To (LID - WhatsApp ID)</label>
               <input
                 value={sendForm.to}
                 onChange={e => setSendForm(f => ({ ...f, to: e.target.value }))}
-                placeholder="628xxxxxxxxxx"
+                placeholder="93972039293@lid (WhatsApp LID)"
                 className="w-full bg-bg border border-border text-white font-mono text-sm px-4 py-3 outline-none focus:border-border-active transition-colors"
               />
             </div>
 
-            {sendMode === 'text' ? (
-              <div>
-                <label className="font-mono text-xs text-muted tracking-widest uppercase block mb-2">Message</label>
-                <textarea
-                  value={sendForm.text}
-                  onChange={e => setSendForm(f => ({ ...f, text: e.target.value }))}
-                  placeholder="Hello from wahaGI!"
-                  rows={4}
-                  className="w-full bg-bg border border-border text-white font-mono text-sm px-4 py-3 outline-none focus:border-border-active transition-colors resize-none"
-                />
-              </div>
-            ) : (
-              <div>
-                <label className="font-mono text-xs text-muted tracking-widest uppercase block mb-2">Media Files (Multiple)</label>
-                <input
-                  ref={fileInputRef}
-                  type="file"
-                  multiple
-                  onChange={e => setSendForm(f => ({ ...f, media: Array.from(e.target.files || []) }))}
-                  className="w-full bg-bg border border-border text-white font-mono text-sm px-4 py-3 outline-none focus:border-border-active transition-colors"
-                  accept="image/*,video/*,audio/*,application/*"
-                />
-                {sendForm.media.length > 0 && (
-                  <div className="mt-2 space-y-1">
-                    {sendForm.media.map((file, idx) => (
-                      <p key={idx} className="font-mono text-xs text-green">
-                        ✓ {idx + 1}. {file.name} ({(file.size / 1024).toFixed(1)} KB)
-                      </p>
-                    ))}
-                    <p className="font-mono text-xs text-muted pt-1">
-                      Total: {sendForm.media.length} file(s)
-                    </p>
-                  </div>
-                )}
-                <label className="font-mono text-xs text-muted tracking-widest uppercase block mb-2 mt-4">Caption (optional)</label>
-                <textarea
-                  value={sendForm.text}
-                  onChange={e => setSendForm(f => ({ ...f, text: e.target.value }))}
-                  placeholder="Add a caption for all files..."
-                  rows={2}
-                  className="w-full bg-bg border border-border text-white font-mono text-sm px-4 py-3 outline-none focus:border-border-active transition-colors resize-none"
-                />
-              </div>
-            )}
+            <div>
+              <label className="font-mono text-xs text-muted tracking-widest uppercase block mb-2">Message</label>
+              <textarea
+                value={sendForm.text}
+                onChange={e => setSendForm(f => ({ ...f, text: e.target.value }))}
+                placeholder="Hello from wahaGI!"
+                rows={4}
+                className="w-full bg-bg border border-border text-white font-mono text-sm px-4 py-3 outline-none focus:border-border-active transition-colors resize-none"
+              />
+            </div>
 
             <button
               onClick={sendTest}
-              disabled={sending || session?.status !== 'connected' || (sendMode === 'media' && sendForm.media.length === 0)}
+              disabled={sending || session?.status !== 'connected' || !sendForm.text.trim()}
               className="flex items-center gap-2 bg-green text-black font-mono text-xs font-semibold tracking-widest uppercase px-5 py-3 hover:opacity-85 transition-opacity disabled:opacity-40"
             >
-              <Send size={12} /> {sending ? 'Sending...' : (sendMode === 'text' ? 'Send Message' : `Send ${sendForm.media.length} Media`)}
+              <QrCode size={12} /> {sending ? 'Sending...' : 'Send Message'}
             </button>
           </div>
-        </div>
-      )}
-
-      {/* Chats tab */}
-      {activeTab === 'chats' && (
-        <div className="animate-fade-in">
-          <div className="flex items-center justify-between mb-4">
-            <p className="font-mono text-xs text-muted">{chats.length} chats loaded</p>
-            <button onClick={loadChats} disabled={chatsLoading} className="flex items-center gap-2 font-mono text-xs text-muted hover:text-green transition-colors">
-              <RefreshCw size={12} className={chatsLoading ? 'animate-spin' : ''} /> Refresh
-            </button>
-          </div>
-          {chatsLoading ? (
-            <div className="flex items-center gap-3 py-8">
-              <div className="w-4 h-4 border-2 border-border border-t-green rounded-full animate-spin" />
-              <span className="font-mono text-xs text-muted">Loading chats...</span>
-            </div>
-          ) : chats.length === 0 ? (
-            <div className="border border-dashed border-border p-12 text-center">
-              <p className="font-mono text-xs text-muted">No chats available</p>
-              <p className="font-mono text-xs text-muted mt-2">Send or receive messages to see chats</p>
-            </div>
-          ) : (
-            <div className="border border-border divide-y divide-border">
-              {chats.map(chat => (
-                <div
-                  key={chat.id}
-                  onClick={() => {
-                    // Normalize JID to phone number for consistent routing
-                    const phone = chat.id.includes('@') ? chat.id.split('@')[0] : chat.id;
-                    navigate(`/device/${id}/chat/${phone}`);
-                  }}
-                  className="flex items-center justify-between px-4 py-3 hover:bg-white/5 transition-colors cursor-pointer"
-                >
-                  <div className="min-w-0 flex-1">
-                    <div className="flex items-center gap-2">
-                      <p className="font-mono text-xs text-white truncate">{chat.name || chat.id.split('@')[0]}</p>
-                      {chat.unread_count > 0 && (
-                        <span className="bg-green text-black font-mono text-xs font-bold px-1.5 py-0.5 rounded">
-                          {chat.unread_count}
-                        </span>
-                      )}
-                    </div>
-                    {chat.last_message && (
-                      <p className="font-mono text-xs text-muted truncate mt-1">
-                        {chat.last_message.is_from_me && '📤 '}
-                        {chat.last_message.type !== 'text' ? `[${chat.last_message.type}]` : chat.last_message.text}
-                      </p>
-                    )}
-                  </div>
-                  {chat.last_chat && (
-                    <p className="font-mono text-xs text-muted ml-2">
-                      {new Date(chat.last_chat).toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' })}
-                    </p>
-                  )}
-                </div>
-              ))}
-            </div>
-          )}
         </div>
       )}
     </Layout>

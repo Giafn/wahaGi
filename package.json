@@ -11,6 +11,9 @@
     "db:generate": "npx prisma generate",
     "db:push": "npx prisma db push",
     "db:studio": "npx prisma studio",
+    "db:reset": "npx prisma migrate reset",
+    "db:fresh": "npx prisma migrate reset && npm run db:generate",
+    "db:seed": "node scripts/seed.js",
     "create-user": "node scripts/create-user.js",
     "test": "node --test test/**/*.test.js",
     "test:watch": "node --test --watch test/**/*.test.js"

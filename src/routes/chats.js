@@ -1,5 +1,5 @@
 import { prisma } from '../db/client.js';
-import { getSession, getChatList, getChatHistory, getMessagesByPhoneNumber } from '../services/sessionManager.js';
+import { getSession, getChatList, getChatHistory, getMessagesByLID } from '../services/sessionManager.js';
 
 export async function chatRoutes(fastify) {
   fastify.addHook('preHandler', fastify.authenticate);
@@ -22,18 +22,9 @@ export async function chatRoutes(fastify) {
           items: {
             type: 'object',
             properties: {
-              id: { type: 'string', description: 'Chat JID (e.g., 628xxx@s.whatsapp.net)' },
-              name: { type: 'string', description: 'Contact name or phone number' },
-              last_message: {
-                type: 'object',
-                nullable: true,
-                properties: {
-                  text: { type: 'string', description: 'Message text or [type] for media' },
-                  type: { type: 'string', enum: ['text', 'image', 'video', 'audio', 'document'] },
-                  is_from_me: { type: 'boolean', description: 'True if outgoing message' },
-                  timestamp: { type: 'integer', description: 'Unix timestamp' }
-                }
-              },
+              id: { type: 'string', description: 'Chat database ID' },
+              lid: { type: 'string', description: 'WhatsApp LID (primary identifier)' },
+              name: { type: 'string', description: 'Contact name or LID' },
               last_chat: { type: 'integer', description: 'Unix timestamp of last message' },
               unread_count: { type: 'integer', description: 'Number of unread messages' }
             }
@@ -61,7 +52,6 @@ export async function chatRoutes(fastify) {
 
     console.log('[CHATS] Getting chat list for session:', session.id);
 
-    // Get chat list from database (works even if session not connected)
     const chats = await getChatList(session.id);
 
     console.log('[CHATS] Found', chats.length, 'chats');
@@ -69,17 +59,17 @@ export async function chatRoutes(fastify) {
     return chats;
   });
 
-  // GET /sessions/:id/chats/:jid/messages - Get message history for specific chat
-  fastify.get('/:id/chats/:jid/messages', {
+  // GET /sessions/:id/chats/:lid/messages - Get message history for specific chat by LID
+  fastify.get('/:id/chats/:lid/messages', {
     schema: {
       tags: ['Chats'],
       security: [{ bearerAuth: [] }],
       params: {
         type: 'object',
-        required: ['id', 'jid'],
+        required: ['id', 'lid'],
         properties: {
           id: { type: 'string', format: 'uuid' },
-          jid: { type: 'string' }
+          lid: { type: 'string', description: 'WhatsApp LID' }
         }
       },
       querystring: {
@@ -96,6 +86,7 @@ export async function chatRoutes(fastify) {
             properties: {
               id: { type: 'string' },
               from: { type: 'string' },
+              lid: { type: 'string' },
               message: { type: 'string' },
               type: { type: 'string' },
               is_from_me: { type: 'boolean' },
@@ -111,28 +102,27 @@ export async function chatRoutes(fastify) {
     });
     if (!session) return reply.code(404).send({ error: 'Session not found' });
 
-    // Decode JID from URL (handle @ encoded as %40)
-    const jid = decodeURIComponent(request.params.jid);
+    const lid = decodeURIComponent(request.params.lid);
     const { limit = 20 } = request.query;
 
-    console.log('[Chat Messages] Getting messages for JID:', jid, 'limit:', limit);
+    console.log('[Chat Messages] Getting messages for LID:', lid, 'limit:', limit);
 
-    const messages = await getChatHistory(session.id, jid, limit);
+    const messages = await getChatHistory(session.id, lid, limit);
     console.log('[Chat Messages] Got', messages.length, 'messages');
     return messages;
   });
 
-  // POST /sessions/:id/chats/:jid/read - Mark chat as read
-  fastify.post('/:id/chats/:jid/read', {
+  // POST /sessions/:id/chats/:lid/read - Mark chat as read
+  fastify.post('/:id/chats/:lid/read', {
     schema: {
       tags: ['Chats'],
       security: [{ bearerAuth: [] }],
       params: {
         type: 'object',
-        required: ['id', 'jid'],
+        required: ['id', 'lid'],
         properties: {
           id: { type: 'string', format: 'uuid' },
-          jid: { type: 'string' }
+          lid: { type: 'string', description: 'WhatsApp LID' }
         }
       },
       response: {
@@ -150,12 +140,12 @@ export async function chatRoutes(fastify) {
     });
     if (!session) return reply.code(404).send({ error: 'Session not found' });
 
-    const { jid } = request.params;
+    const { lid } = request.params;
 
     await prisma.chat.updateMany({
       where: {
         sessionId: session.id,
-        jid
+        lid
       },
       data: {
         unreadCount: 0
@@ -165,16 +155,16 @@ export async function chatRoutes(fastify) {
     return { success: true };
   });
 
-  // GET /messages/:phoneNumber - Get messages by phone number (across all sessions)
-  fastify.get('/messages/:phoneNumber', {
+  // GET /messages/:lid - Get messages by LID (across all sessions)
+  fastify.get('/messages/:lid', {
     schema: {
       tags: ['Messages'],
       security: [{ bearerAuth: [] }],
       params: {
         type: 'object',
-        required: ['phoneNumber'],
+        required: ['lid'],
         properties: {
-          phoneNumber: { type: 'string', description: 'Phone number to search (e.g., 628123456789)' }
+          lid: { type: 'string', description: 'WhatsApp LID to search' }
         }
       },
       querystring: {
@@ -194,6 +184,7 @@ export async function chatRoutes(fastify) {
               session_id: { type: 'string' },
               session_name: { type: 'string' },
               from: { type: 'string' },
+              lid: { type: 'string' },
               message: { type: 'string' },
               type: { type: 'string' },
               is_from_me: { type: 'boolean' },
@@ -204,10 +195,10 @@ export async function chatRoutes(fastify) {
       }
     }
   }, async (request, reply) => {
-    const { phoneNumber } = request.params;
+    const { lid } = request.params;
     const { limit = 50, session_id } = request.query;
 
-    const messages = await getMessagesByPhoneNumber(phoneNumber, session_id, limit);
+    const messages = await getMessagesByLID(lid, session_id, limit);
     return messages;
   });
 }
