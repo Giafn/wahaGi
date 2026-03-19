@@ -9,6 +9,7 @@ const MEDIA_DIR = process.env.MEDIA_DIR || './media';
 
 /**
  * Read all unread messages for a specific chat
+ * Note: Only updates database, does NOT send read receipt to WhatsApp to avoid crashes
  */
 async function readAllMessages(sessionId, jid) {
   const session = getSession(sessionId);
@@ -45,43 +46,9 @@ async function readAllMessages(sessionId, jid) {
       return;
     }
 
-    // Build message keys for Baileys read receipt
-    const messageKeys = unreadMessages
-      .filter(msg => msg.messageId)
-      .map(msg => ({
-        remoteJid: jid,
-        fromMe: false,
-        id: msg.messageId
-      }));
+    console.log(`[readAllMessages] Found ${unreadMessages.length} unread messages for ${phoneNumber}`);
 
-    if (messageKeys.length === 0) {
-      console.log('[readAllMessages] No valid message keys to read');
-      return;
-    }
-
-    console.log(`[readAllMessages] Attempting to mark ${messageKeys.length} messages as read...`);
-
-    // Send read receipt using chatModify (more stable)
-    try {
-      await session.socket.chatModify(
-        { markRead: true, messages: messageKeys },
-        jid
-      );
-      console.log(`[readAllMessages] ✅ Marked ${messageKeys.length} messages as read for ${phoneNumber}`);
-    } catch (readErr) {
-      // Fallback to readMessages if chatModify fails
-      console.log('[readAllMessages] chatModify failed:', readErr.message);
-      console.log('[readAllMessages] Trying readMessages fallback...');
-      try {
-        await session.socket.readMessages(messageKeys);
-        console.log(`[readAllMessages] ✅ Marked ${messageKeys.length} messages as read (fallback) for ${phoneNumber}`);
-      } catch (readErr2) {
-        console.error('[readAllMessages] readMessages also failed:', readErr2.message);
-        // Don't throw - continue anyway
-      }
-    }
-
-    // Update unread count in database
+    // Update unread count in database only (don't send read receipt to WhatsApp)
     try {
       await prisma.chat.updateMany({
         where: {
@@ -92,7 +59,7 @@ async function readAllMessages(sessionId, jid) {
           unreadCount: 0
         }
       });
-      console.log('[readAllMessages] Updated database unread count');
+      console.log('[readAllMessages] ✅ Updated database unread count (read receipt to WhatsApp disabled)');
     } catch (dbErr) {
       console.error('[readAllMessages] DB update failed:', dbErr.message);
     }
@@ -117,8 +84,6 @@ export async function sendText(sessionId, to, text, reply_to = null) {
   // Read all unread messages before sending (non-blocking)
   try {
     await readAllMessages(sessionId, jid);
-    // Small delay to avoid race condition with read receipt
-    await sleep(100);
   } catch (err) {
     console.log('[sendText] readAllMessages error (continuing):', err.message);
   }
@@ -252,8 +217,6 @@ export async function sendMedia(sessionId, to, buffer, mimetype, filename, capti
   // Read all unread messages before sending (non-blocking)
   try {
     await readAllMessages(sessionId, jid);
-    // Small delay to avoid race condition with read receipt
-    await sleep(100);
   } catch (err) {
     console.log('[sendMedia] readAllMessages error (continuing):', err.message);
   }
