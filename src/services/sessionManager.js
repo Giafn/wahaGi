@@ -255,7 +255,8 @@ async function _initSocket(sessionId, userId) {
         data: { status: 'disconnected' }
       }).catch(() => {});
 
-      await dispatchWebhook(sessionId, { event: 'session.update', status: 'disconnected', reason });
+      // Session status updates via API only - no webhook
+      // await dispatchWebhook(sessionId, { event: 'session.update', status: 'disconnected', reason });
 
       if (shouldReconnect && entry.retryCount < 5) {
         entry.retryCount++;
@@ -295,7 +296,8 @@ async function _initSocket(sessionId, userId) {
         data: { status: 'connected', lastSeen: new Date() }
       }).catch(() => {});
 
-      await dispatchWebhook(sessionId, { event: 'session.update', status: 'connected' });
+      // Session status updates via API only - no webhook
+      // await dispatchWebhook(sessionId, { event: 'session.update', status: 'connected' });
     }
   });
 

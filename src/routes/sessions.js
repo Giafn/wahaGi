@@ -422,4 +422,47 @@ export async function sessionRoutes(fastify) {
 
     return { status: result.status, qr: qrBase64 };
   });
+
+  // GET /sessions/:id/status - Check session status (for webhook alternative)
+  fastify.get('/:id/status', {
+    schema: {
+      tags: ['Sessions'],
+      security: [{ bearerAuth: [] }],
+      params: {
+        type: 'object',
+        required: ['id'],
+        properties: {
+          id: { type: 'string', format: 'uuid' }
+        }
+      },
+      response: {
+        200: {
+          type: 'object',
+          properties: {
+            session_id: { type: 'string' },
+            status: { type: 'string', enum: ['connected', 'connecting', 'qr', 'disconnected'] },
+            live_status: { type: 'string', nullable: true, description: 'Real-time status from memory' },
+            last_seen: { type: 'string', format: 'date-time', nullable: true },
+            webhook_url: { type: 'string', nullable: true }
+          }
+        }
+      }
+    }
+  }, async (request, reply) => {
+    const session = await prisma.session.findFirst({
+      where: { id: request.params.id, userId: request.user.id }
+    });
+
+    if (!session) return reply.code(404).send({ error: 'Session not found' });
+
+    const live = getSession(session.id);
+
+    return {
+      session_id: session.id,
+      status: session.status,
+      live_status: live?.status || null,
+      last_seen: session.lastSeen,
+      webhook_url: session.webhookUrl
+    };
+  });
 }
