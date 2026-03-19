@@ -40,11 +40,10 @@ async function readAllMessages(sessionId, jid) {
     }
 
     // Build message keys for Baileys read receipt
-    // remoteJid must be the actual JID format (with @s.whatsapp.net)
     const messageKeys = unreadMessages
-      .filter(msg => msg.messageId) // Filter out null messageIds
+      .filter(msg => msg.messageId)
       .map(msg => ({
-        remoteJid: jid, // Use the JID passed in (already has @s.whatsapp.net)
+        remoteJid: jid,
         fromMe: false,
         id: msg.messageId
       }));
@@ -54,9 +53,19 @@ async function readAllMessages(sessionId, jid) {
       return;
     }
 
-    // Send read receipt to WhatsApp using socket.readMessages
-    await session.socket.readMessages(messageKeys);
-    console.log(`[readAllMessages] ✅ Marked ${messageKeys.length} messages as read for ${phoneNumber}`);
+    // Send read receipt using chatModify (more stable)
+    try {
+      await session.socket.chatModify(
+        { markRead: true, messages: messageKeys },
+        jid
+      );
+      console.log(`[readAllMessages] ✅ Marked ${messageKeys.length} messages as read for ${phoneNumber}`);
+    } catch (readErr) {
+      // Fallback to readMessages if chatModify fails
+      console.log('[readAllMessages] chatModify failed, trying readMessages:', readErr.message);
+      await session.socket.readMessages(messageKeys);
+      console.log(`[readAllMessages] ✅ Marked ${messageKeys.length} messages as read (fallback) for ${phoneNumber}`);
+    }
 
     // Update unread count in database
     await prisma.chat.updateMany({
@@ -69,7 +78,8 @@ async function readAllMessages(sessionId, jid) {
       }
     });
   } catch (err) {
-    console.error('[readAllMessages] Error:', err.message);
+    // Non-blocking: don't crash the app, just log error
+    console.error('[readAllMessages] Non-critical error (continuing):', err.message);
   }
 }
 
@@ -85,8 +95,12 @@ export async function sendText(sessionId, to, text, reply_to = null) {
   // Convert phone number to proper JID format
   const jid = toJID(to);
 
-  // Read all unread messages before sending
-  await readAllMessages(sessionId, jid);
+  // Read all unread messages before sending (non-blocking)
+  try {
+    await readAllMessages(sessionId, jid);
+  } catch (err) {
+    console.log('[sendText] readAllMessages error (continuing):', err.message);
+  }
 
   const message = {
     text,
@@ -214,8 +228,12 @@ export async function sendMedia(sessionId, to, buffer, mimetype, filename, capti
 
   const jid = to.includes('@') ? to : `${to}@s.whatsapp.net`;
 
-  // Read all unread messages before sending
-  await readAllMessages(sessionId, jid);
+  // Read all unread messages before sending (non-blocking)
+  try {
+    await readAllMessages(sessionId, jid);
+  } catch (err) {
+    console.log('[sendMedia] readAllMessages error (continuing):', err.message);
+  }
 
   let message;
   const mediaType = getMediaType(mimetype);
