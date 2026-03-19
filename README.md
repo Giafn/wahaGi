@@ -36,8 +36,13 @@ npm run db:generate
 npm run db:migrate
 ```
 
-### 4. Create Admin User
+### 4. Seed Database (Create Admin User)
 
+```bash
+npm run db:seed
+```
+
+Atau interactive:
 ```bash
 npm run create-user
 ```
@@ -172,8 +177,9 @@ baileys-api/
 | `npm run db:migrate` | Apply database migrations |
 | `npm run db:reset` | Reset database (drop all tables & re-migrate) |
 | `npm run db:fresh` | Reset database + regenerate Prisma client |
+| `npm run db:seed` | Seed database with initial data (admin user) |
 | `npm run db:studio` | Open Prisma Studio (DB viewer) |
-| `npm run create-user` | Create admin user |
+| `npm run create-user` | Create admin user (interactive) |
 | `npm test` | Run tests |
 
 ---
