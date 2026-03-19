@@ -170,6 +170,8 @@ baileys-api/
 | `npm run dev` | Run development server (auto-reload) |
 | `npm run db:generate` | Generate Prisma client |
 | `npm run db:migrate` | Apply database migrations |
+| `npm run db:reset` | Reset database (drop all tables & re-migrate) |
+| `npm run db:fresh` | Reset database + regenerate Prisma client |
 | `npm run db:studio` | Open Prisma Studio (DB viewer) |
 | `npm run create-user` | Create admin user |
 | `npm test` | Run tests |
