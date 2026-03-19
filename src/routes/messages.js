@@ -207,27 +207,38 @@ export async function messageRoutes(fastify) {
       const filesArray = Array.isArray(request.body.files) ? request.body.files : [request.body.files];
       for (const fileField of filesArray) {
         if (fileField && fileField.file) {
-          const buffer = await fileField.toBuffer();
-          files.push({
-            buffer,
-            mimetype: fileField.mimetype,
-            filename: fileField.filename
-          });
+          try {
+            const buffer = await fileField.toBuffer();
+            files.push({
+              buffer,
+              mimetype: fileField.mimetype,
+              filename: fileField.filename
+            });
+            console.log('[SEND-MULTIPLE] File buffered:', fileField.filename, buffer.length, 'bytes');
+          } catch (err) {
+            console.error('[SEND-MULTIPLE] Failed to buffer file:', err.message);
+          }
         }
       }
     }
 
     // Fallback: try request.files()
     if (files.length === 0) {
+      console.log('[SEND-MULTIPLE] No files from body, trying request.files()...');
       const fileParts = request.files();
       for await (const part of fileParts) {
         if (part.filename) {
-          const buffer = await part.toBuffer();
-          files.push({
-            buffer,
-            mimetype: part.mimetype,
-            filename: part.filename
-          });
+          try {
+            const buffer = await part.toBuffer();
+            files.push({
+              buffer,
+              mimetype: part.mimetype,
+              filename: part.filename
+            });
+            console.log('[SEND-MULTIPLE] File buffered from parts:', part.filename, buffer.length, 'bytes');
+          } catch (err) {
+            console.error('[SEND-MULTIPLE] Failed to buffer file from parts:', err.message);
+          }
         }
       }
     }
@@ -239,14 +250,16 @@ export async function messageRoutes(fastify) {
     }
 
     try {
+      console.log('[SEND-MULTIPLE] Calling sendMultipleMedia...');
       const results = await sendMultipleMedia(session.id, to, files, caption, reply_to);
-      console.log('[SUCCESS] Sent', results.length, 'media files');
+      console.log('[SEND-MULTIPLE] Completed, sent:', results.length, 'files');
       return {
         sent: results.length,
         message_ids: results.map(r => r.key?.id)
       };
     } catch (err) {
-      console.error('[ERROR] sendMultipleMedia:', err.message);
+      console.error('[SEND-MULTIPLE] Route error:', err.message);
+      console.error('[SEND-MULTIPLE] Stack:', err.stack);
       return reply.code(400).send({ error: err.message });
     }
   });

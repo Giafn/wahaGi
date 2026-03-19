@@ -339,18 +339,25 @@ export async function sendMultipleMedia(sessionId, to, files, caption = null, re
         fileCaption,
         reply_to
       );
-      results.push(result);
-      console.log('[SEND-MULTIPLE] File', i + 1, 'sent successfully');
+
+      if (result) {
+        results.push(result);
+        console.log('[SEND-MULTIPLE] File', i + 1, 'sent successfully, message ID:', result.key?.id);
+      } else {
+        console.error('[SEND-MULTIPLE] File', i + 1, 'returned null result');
+      }
 
       // Delay between messages (except after the last one)
       if (i < lastIndex) {
         const delayMin = parseInt(process.env.MEDIA_SEND_DELAY_MIN || '500');
         const delayMax = parseInt(process.env.MEDIA_SEND_DELAY_MAX || '1000');
         const delay = Math.floor(Math.random() * (delayMax - delayMin + 1)) + delayMin;
+        console.log('[SEND-MULTIPLE] Waiting', delay, 'ms before next file...');
         await sleep(delay);
       }
     } catch (err) {
       console.error('[SEND-MULTIPLE] Failed to send file', i + 1, ':', err.message);
+      console.error('[SEND-MULTIPLE] Stack:', err.stack);
       // Continue with next file instead of throwing
       // throw new Error(`Failed to send media ${file.filename}: ${err.message}`);
     }
