@@ -111,6 +111,125 @@ export function getContactByLID(sessionId, lid) {
 }
 
 /**
+ * Resolve LID to phone number using multiple methods
+ */
+export async function resolveLID(sessionId, lid, msg = null) {
+  let resolved = null;
+
+  // Method 1: Check recent outgoing messages (last 24 hours)
+  const recentOutgoing = await prisma.chatHistory.findMany({
+    where: {
+      sessionId,
+      isFromMe: true,
+      timestamp: {
+        gte: new Date(Date.now() - (24 * 60 * 60 * 1000))
+      }
+    },
+    orderBy: [{ timestamp: 'desc' }],
+    take: 50,
+    distinct: ['from']
+  });
+
+  if (recentOutgoing.length > 0) {
+    const lastOutgoingPhone = recentOutgoing[0].from;
+    const lastOutgoingTime = recentOutgoing[0].timestamp;
+    const msgTime = msg ? new Date(msg.messageTimestamp * 1000) : new Date();
+    const timeDiff = Math.abs(msgTime.getTime() - lastOutgoingTime.getTime());
+
+    if (timeDiff < 5 * 60 * 1000) {
+      resolved = lastOutgoingPhone;
+      updateContactCache(sessionId, lid, resolved);
+      log(`📞 ✅ Resolved via Method 1 (recent): ${lid} → ${resolved}`);
+      return resolved;
+    }
+  }
+
+  // Method 2: Check existing chats in database (match by lid)
+  const existingChats = await prisma.chat.findMany({
+    where: { sessionId }
+  });
+
+  for (const chat of existingChats) {
+    if (chat.lid === lid) {
+      resolved = chat.jid;
+      log(`📞 ✅ Resolved via Method 2 (chat lid): ${lid} → ${resolved}`);
+      return resolved;
+    }
+  }
+
+  // Method 3: Check ALL chats in database for matching phone patterns
+  // This helps resolve group members who have chatted before
+  for (const chat of existingChats) {
+    // Check if this chat's JID matches the LID pattern
+    if (chat.jid.length >= 10 && chat.jid.length < 15) {
+      // Store in cache for future reference
+      if (chat.lid && chat.lid.length >= 15) {
+        updateContactCache(sessionId, chat.lid, chat.jid);
+      }
+    }
+  }
+
+  // Check cache again after populating
+  const cached = getContactByLID(sessionId, lid);
+  if (cached && cached.length >= 10 && cached.length < 15) {
+    resolved = cached;
+    log(`📞 ✅ Resolved via Method 2.5 (cache): ${lid} → ${resolved}`);
+    return resolved;
+  }
+
+  // Method 4: Check Baileys contacts store - search ALL contacts
+  const session = getSession(sessionId);
+  if (session?.store?.contacts) {
+    const contacts = session.store.contacts || {};
+
+    // Search through all contacts for matching LID
+    for (const [jid, contact] of Object.entries(contacts)) {
+      // Check if this contact's JID matches our LID
+      const contactLid = jid.split('@')[0];
+      if (contactLid === lid) {
+        // Found direct match
+        const phoneFields = ['notify', 'name', 'verifiedName', 'subject', 'pushName'];
+        for (const field of phoneFields) {
+          if (contact[field]) {
+            const potential = contact[field].replace(/[^0-9]/g, '');
+            if (potential.length >= 10 && potential.length < 15) {
+              resolved = potential;
+              updateContactCache(sessionId, lid, resolved);
+              log(`📞 ✅ Resolved via Method 4 (direct contact ${jid}): ${lid} → ${resolved}`);
+              return resolved;
+            }
+          }
+        }
+      }
+
+      // Also check contact.notify for phone number
+      if (contact.notify) {
+        const potential = contact.notify.replace(/[^0-9]/g, '');
+        if (potential.length >= 10 && potential.length < 15) {
+          // Cache this for future
+          const contactLidFromJid = jid.split('@')[0];
+          updateContactCache(sessionId, contactLidFromJid, potential);
+        }
+      }
+    }
+
+    // Method 5: Try to get from msg.senderPn directly
+    if (msg?.key?.senderPn) {
+      const senderPn = msg.key.senderPn.split('@')[0].replace(/[^0-9]/g, '');
+      if (senderPn.length >= 10 && senderPn.length < 15) {
+        resolved = senderPn;
+        updateContactCache(sessionId, lid, resolved);
+        log(`📞 ✅ Resolved via Method 5 (senderPn): ${lid} → ${resolved}`);
+        return resolved;
+      }
+    }
+  }
+
+  log(`⚠️ Could not resolve LID ${lid} - no matching contact found`);
+  return null;
+}
+
+/**
  * Convert phone number to proper JID format for sending
  */
 function toJID(phoneNumber) {
@@ -360,15 +479,24 @@ setInterval(() => {
         // For group chat, extract sender from participant field
         const participant = msg.participant || msg.key.participant || msg.key.senderPn;
         if (participant) {
-          phoneNumber = normalizeJID(participant, sessionId, msg);
-          log(`👥 Group chat - sender: ${participant} → ${phoneNumber}`);
+          lid = normalizeJID(participant, sessionId, msg);
+          log(`👥 Group chat - participant LID: ${participant} → ${lid}`);
+
+          // Try to resolve LID to phone number
+          const resolved = await resolveLID(sessionId, lid, msg);
+          if (resolved) {
+            phoneNumber = resolved;
+            log(`📞 ✅ Resolved group sender: ${lid} → ${phoneNumber}`);
+          } else {
+            phoneNumber = lid;
+            log(`⚠️ Could not resolve group sender LID, using: ${lid}`);
+          }
         } else {
           log(`⚠️ Group chat - no participant found, using group ID`);
         }
-        lid = phoneNumber; // Store sender as lid for group chats
       }
 
-      // If it's still a LID (15+ digits), try multiple methods to resolve
+      // If it's still a LID (15+ digits) for non-group, try to resolve
       if (phoneNumber.length >= 15 && !isGroup) {
         lid = phoneNumber;
         let resolved = false;
