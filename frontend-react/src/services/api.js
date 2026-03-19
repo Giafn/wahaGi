@@ -58,8 +58,8 @@ export const api = {
   // Chats
   listChats: (id) => request('GET', `/sessions/${id}/chats`),
   listContacts: (id) => request('GET', `/sessions/${id}/contacts`),
-  getChatMessages: (id, jid, limit = 50) => {
-    return request('GET', `/sessions/${id}/chats/${jid}/messages`, undefined, false, { limit });
+  getChatMessages: (id, lid, limit = 50) => {
+    return request('GET', `/sessions/${id}/chats/${lid}/messages`, undefined, false, { limit });
   },
-  markChatAsRead: (id, phoneNumber) => request('POST', `/sessions/${id}/chats/${phoneNumber}/read`),
+  markChatAsRead: (id, lid) => request('POST', `/sessions/${id}/chats/${lid}/read`),
 };

@@ -231,6 +231,7 @@ export default function DeviceDetail() {
   "event": "message.received",
   "session_id": "${id}",
   "from": "628xxx@s.whatsapp.net",
+  "lid": "628xxx",
   "type": "text",
   "text": "Hello!",
   "timestamp": 1710000000
@@ -251,11 +252,11 @@ export default function DeviceDetail() {
 
           <div className="space-y-4">
             <div>
-              <label className="font-mono text-xs text-muted tracking-widest uppercase block mb-2">To (phone number)</label>
+              <label className="font-mono text-xs text-muted tracking-widest uppercase block mb-2">To (LID - WhatsApp ID)</label>
               <input
                 value={sendForm.to}
                 onChange={e => setSendForm(f => ({ ...f, to: e.target.value }))}
-                placeholder="628xxxxxxxxxx"
+                placeholder="93972039293@lid (WhatsApp LID)"
                 className="w-full bg-bg border border-border text-white font-mono text-sm px-4 py-3 outline-none focus:border-border-active transition-colors"
               />
             </div>
