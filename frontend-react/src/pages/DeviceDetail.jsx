@@ -231,10 +231,11 @@ export default function DeviceDetail() {
   "event": "message.received",
   "session_id": "${id}",
   "from": "628xxx@s.whatsapp.net",
-  "lid": "628xxx",
+  "is_group": false,
+  "message_id": "ABC123",
   "type": "text",
-  "text": "Hello!",
-  "timestamp": 1710000000
+  "timestamp": 1710000000,
+  "text": "Hello!"
 }`}
             </pre>
           </div>

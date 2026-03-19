@@ -472,7 +472,6 @@ async function buildWebhookPayload(msg, type, sessionId, lid) {
     event: 'message.received',
     session_id: sessionId,
     from: jid,
-    lid,
     is_group: isGroup,
     message_id: msg.key.id,
     type,
