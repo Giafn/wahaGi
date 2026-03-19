@@ -270,7 +270,11 @@ export async function sendMedia(sessionId, to, buffer, mimetype, filename, capti
   }
 
   console.log('[sendMedia] About to call sendMessage...');
+  console.log('[sendMedia] Socket exists:', !!session.socket);
+  console.log('[sendMedia] Socket sendMessage exists:', typeof session.socket?.sendMessage);
+
   try {
+    console.log('[sendMedia] Calling session.socket.sendMessage...');
     const result = await session.socket.sendMessage(jid, message);
     console.log('[sendMedia] sendMessage completed, result:', result?.key?.id);
 
@@ -284,8 +288,11 @@ export async function sendMedia(sessionId, to, buffer, mimetype, filename, capti
     console.log('[sendMedia] Returning result');
     return result;
   } catch (err) {
-    console.error('[sendMedia] Error sending message:', err.message);
+    console.error('[sendMedia] CRITICAL ERROR:', err.message);
+    console.error('[sendMedia] Error type:', err.constructor.name);
+    console.error('[sendMedia] Full error:', err);
     console.error('[sendMedia] Stack:', err.stack);
+    console.error('[sendMedia] Socket state:', session.socket?.chats?.length);
     throw err;
   }
 }
