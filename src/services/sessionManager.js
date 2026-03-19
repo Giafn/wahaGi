@@ -353,8 +353,23 @@ setInterval(() => {
 
       log(`🔍 Processing incoming: jid=${jid}, normalized=${phoneNumber}, length=${phoneNumber.length}`);
 
+      // Check if this is a group chat
+      const isGroup = jid.includes('@g.us');
+
+      if (isGroup) {
+        // For group chat, extract sender from participant field
+        const participant = msg.participant || msg.key.participant || msg.key.senderPn;
+        if (participant) {
+          phoneNumber = normalizeJID(participant, sessionId, msg);
+          log(`👥 Group chat - sender: ${participant} → ${phoneNumber}`);
+        } else {
+          log(`⚠️ Group chat - no participant found, using group ID`);
+        }
+        lid = phoneNumber; // Store sender as lid for group chats
+      }
+
       // If it's still a LID (15+ digits), try multiple methods to resolve
-      if (phoneNumber.length >= 15) {
+      if (phoneNumber.length >= 15 && !isGroup) {
         lid = phoneNumber;
         let resolved = false;
 
@@ -783,21 +798,26 @@ async function saveChatHistoryWithPhone(sessionId, jid, msg, msgType, phoneNumbe
  */
 async function buildWebhookPayloadWithPhone(msg, type, sessionId, phoneNumber) {
   const jid = msg.key.remoteJid;
+  const isGroup = jid.includes('@g.us');
 
   const base = {
     event: 'message.received',
     session_id: sessionId,
     from: jid,
-    phone_number: phoneNumber, // Use resolved phone number
+    phone_number: phoneNumber,
+    is_group: isGroup,
     message_id: msg.key.id,
     type,
     timestamp: msg.messageTimestamp
   };
 
-  // Handle text messages
+  // Handle text messages - check multiple possible locations
   if (type === 'text') {
     base.text = msg.message?.conversation ||
-      msg.message?.extendedTextMessage?.text || '';
+                msg.message?.extendedTextMessage?.text ||
+                msg.message?.imageMessage?.caption ||
+                msg.message?.videoMessage?.caption ||
+                '';
   }
 
   // Handle image messages with caption
