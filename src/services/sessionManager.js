@@ -210,26 +210,89 @@ export async function resolveLID(sessionId, lid, msg = null) {
     return resolved;
   }
 
-  // Method 4: Try to get from msg.senderPn directly (most reliable for groups)
+  // Method 4: Try to get from msg.senderPn directly
   if (msg?.key?.senderPn) {
     const senderPn = msg.key.senderPn.split('@')[0].replace(/[^0-9]/g, '');
+    // Check if this is a real phone number (10-14 digits) or LID (15+ digits)
     if (senderPn.length >= 10 && senderPn.length < 15) {
       resolved = senderPn;
       updateContactCache(sessionId, lid, resolved);
-      cacheLIDResolution(sessionId, lid, resolved); // Cache persistently
+      cacheLIDResolution(sessionId, lid, resolved);
       log(`📞 ✅ Resolved via Method 4 (senderPn): ${lid} → ${resolved}`);
       return resolved;
+    } else if (senderPn.length >= 15) {
+      // This is also a LID, cache it for future
+      log(`⚠️ senderPn is also LID: ${senderPn}`);
+      lid = senderPn; // Use this LID instead
     }
   }
 
-  // Method 5: Fetch contact from WhatsApp using onWhatsApp()
-  const session = getSession(sessionId);
-  if (session?.socket) {
+  // Method 5: Fetch group metadata to resolve member LID
+  const isGroup = msg?.key?.remoteJid?.includes('@g.us');
+  if (isGroup && lid.length >= 15) {
+    const session = getSession(sessionId);
+    if (session?.socket) {
+      try {
+        const groupJid = msg.key.remoteJid;
+        log(`🔍 Method 5: Fetching group metadata for ${groupJid}...`);
+
+        // Fetch group metadata
+        const groupMetadata = await session.socket.groupMetadata(groupJid);
+
+        if (groupMetadata?.participants) {
+          log(`👥 Group has ${groupMetadata.participants.length} participants`);
+
+          // Find participant with matching LID
+          const participant = groupMetadata.participants.find(p => {
+            const pId = p.id?.split('@')[0];
+            return pId === lid;
+          });
+
+          if (participant) {
+            // Extract phone number from participant JID
+            const phoneFromJid = participant.id.split('@')[0];
+            if (phoneFromJid.length >= 10 && phoneFromJid.length < 15) {
+              resolved = phoneFromJid;
+              updateContactCache(sessionId, lid, resolved);
+              cacheLIDResolution(sessionId, lid, resolved);
+              log(`📞 ✅ Resolved via Method 5 (groupMetadata): ${lid} → ${resolved}`);
+              return resolved;
+            }
+
+            // Check if participant has secondary phone number
+            if (participant.secondaryPhone) {
+              resolved = participant.secondaryPhone.replace(/[^0-9]/g, '');
+              updateContactCache(sessionId, lid, resolved);
+              cacheLIDResolution(sessionId, lid, resolved);
+              log(`📞 ✅ Resolved via Method 5 (secondaryPhone): ${lid} → ${resolved}`);
+              return resolved;
+            }
+          }
+
+          // Alternative: Search all participants for phone number
+          for (const p of groupMetadata.participants) {
+            const pId = p.id?.split('@')[0];
+            if (pId && pId.length >= 10 && pId.length < 15) {
+              // Cache this participant's phone number
+              updateContactCache(sessionId, pId, pId);
+              cacheLIDResolution(sessionId, pId, pId);
+            }
+          }
+        }
+      } catch (err) {
+        log(`⚠️ Method 5 (groupMetadata) failed: ${err.message}`);
+      }
+    }
+  }
+
+  // Method 6: Fetch contact from WhatsApp using onWhatsApp()
+  const session2 = getSession(sessionId);
+  if (session2?.socket) {
     try {
-      log(`🔍 Method 5: Fetching contact from WhatsApp for LID: ${lid}...`);
+      log(`🔍 Method 6: Fetching contact from WhatsApp for LID: ${lid}...`);
 
       // Try to get contact info from Baileys store first
-      const contacts = session.store?.contacts || {};
+      const contacts = session2.store?.contacts || {};
       for (const [jid, contact] of Object.entries(contacts)) {
         const contactLid = jid.split('@')[0];
         if (contactLid === lid && contact.notify) {
@@ -237,8 +300,8 @@ export async function resolveLID(sessionId, lid, msg = null) {
           if (potential.length >= 10 && potential.length < 15) {
             resolved = potential;
             updateContactCache(sessionId, lid, resolved);
-            cacheLIDResolution(sessionId, lid, resolved); // Cache persistently
-            log(`📞 ✅ Resolved via Method 5 (contact.notify): ${lid} → ${resolved}`);
+            cacheLIDResolution(sessionId, lid, resolved);
+            log(`📞 ✅ Resolved via Method 6 (contact.notify): ${lid} → ${resolved}`);
             return resolved;
           }
         }
@@ -246,27 +309,27 @@ export async function resolveLID(sessionId, lid, msg = null) {
 
       // Try onWhatsApp() to verify and get phone number
       const jidWithSuffix = `${lid}@s.whatsapp.net`;
-      const result = await session.socket.onWhatsApp(jidWithSuffix);
+      const result = await session2.socket.onWhatsApp(jidWithSuffix);
 
       if (result && result.length > 0 && result[0].exists) {
         const phoneFromJid = result[0].jid.split('@')[0];
         if (phoneFromJid.length >= 10 && phoneFromJid.length < 15) {
           resolved = phoneFromJid;
           updateContactCache(sessionId, lid, resolved);
-          cacheLIDResolution(sessionId, lid, resolved); // Cache persistently
-          log(`📞 ✅ Resolved via Method 5 (onWhatsApp): ${lid} → ${resolved}`);
+          cacheLIDResolution(sessionId, lid, resolved);
+          log(`📞 ✅ Resolved via Method 6 (onWhatsApp): ${lid} → ${resolved}`);
           return resolved;
         }
       }
     } catch (err) {
-      log(`⚠️ Method 5 failed: ${err.message}`);
+      log(`⚠️ Method 6 failed: ${err.message}`);
     }
   }
 
-  // Method 6: Populate cache from all existing contacts for future use
-  const session2 = getSession(sessionId);
-  if (session2?.store?.contacts) {
-    const contacts = session2.store.contacts || {};
+  // Method 7: Populate cache from all existing contacts for future use
+  const session3 = getSession(sessionId);
+  if (session3?.store?.contacts) {
+    const contacts = session3.store.contacts || {};
     for (const [jid, contact] of Object.entries(contacts)) {
       if (contact.notify) {
         const potential = contact.notify.replace(/[^0-9]/g, '');
