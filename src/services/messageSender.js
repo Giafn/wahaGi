@@ -56,6 +56,19 @@ export async function sendText(sessionId, to, text, reply_to = null) {
  */
 function toJID(phoneNumber) {
   if (!phoneNumber) return '';
+
+  // If already has @s.whatsapp.net or @g.us, return as is
+  if (phoneNumber.includes('@')) {
+    return phoneNumber;
+  }
+
+  // Check if this is a group ID (contains dash or already numeric with 15+ digits)
+  if (phoneNumber.includes('-') || (phoneNumber.length >= 15 && /^\d+$/.test(phoneNumber))) {
+    // Group ID - add @g.us
+    return `${phoneNumber}@g.us`;
+  }
+
+  // Regular phone number - add @s.whatsapp.net
   const normalized = normalizeJID(phoneNumber);
   return `${normalized}@s.whatsapp.net`;
 }
@@ -117,13 +130,23 @@ async function saveOutgoingMessage(sessionId, jid, message, type, messageId = nu
 }
 
 /**
- * Normalize JID to phone number
+ * Normalize JID to phone number (or Group ID)
  */
 function normalizeJID(jid) {
   if (!jid) return '';
-  let phone = jid.split('@')[0];
-  phone = phone.replace(/^\+/, '').replace(/[^0-9]/g, '');
-  return phone;
+
+  // Extract part before @
+  let id = jid.split('@')[0];
+
+  // Check if this looks like a Group ID (contains dash)
+  if (id.includes('-')) {
+    // Preserve Group ID format (keep dash)
+    return id.replace(/^\+/, '');
+  }
+
+  // Regular phone number - remove non-digits
+  id = id.replace(/^\+/, '').replace(/[^0-9]/g, '');
+  return id;
 }
 
 /**
