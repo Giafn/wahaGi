@@ -187,7 +187,7 @@ export async function messageRoutes(fastify) {
     if (caption && typeof caption === 'object' && caption.value !== undefined) caption = caption.value;
     if (reply_to && typeof reply_to === 'object' && reply_to.value !== undefined) reply_to = reply_to.value;
 
-    if (!to) return reply.code(400).send({ error: 'to (phone number) is required' });
+    if (!to) return reply.code(400).send({ error: 'to is required' });
 
     const files = [];
     if (request.body?.files) {
@@ -216,6 +216,7 @@ export async function messageRoutes(fastify) {
       const results = await sendMultipleMedia(session.id, to, files, caption, reply_to);
       return { sent: results.length, message_ids: results.map(r => r.key?.id) };
     } catch (err) {
+      console.error('Send media error:', err.message);
       return reply.code(400).send({ error: err.message });
     }
   });

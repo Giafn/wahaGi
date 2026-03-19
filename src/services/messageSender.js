@@ -9,24 +9,16 @@ const MEDIA_DIR = process.env.MEDIA_DIR || './media';
 
 /**
  * Read all unread messages for a specific chat
- * Lightweight version for old CPU servers - only update database
  */
 async function readAllMessages(sessionId, jid) {
   try {
     const phoneNumber = jid.replace('@s.whatsapp.net', '');
-
-    // Simple update without query - just reset unread count
     await prisma.chat.updateMany({
-      where: {
-        sessionId,
-        jid: phoneNumber
-      },
-      data: {
-        unreadCount: 0
-      }
+      where: { sessionId, jid: phoneNumber },
+      data: { unreadCount: 0 }
     });
   } catch (err) {
-    // Completely ignore errors - this is non-critical
+    // Ignore
   }
 }
 
@@ -161,8 +153,6 @@ function normalizeJID(jid) {
  * Send single media file
  */
 export async function sendMedia(sessionId, to, buffer, mimetype, filename, caption = null, reply_to = null) {
-  console.log('[sendMedia] START - to:', to, 'size:', Math.round(buffer.length / 1024), 'KB');
-
   const session = getSession(sessionId);
   if (!session || session.status !== 'connected') {
     throw new Error('Session not connected');
@@ -170,14 +160,8 @@ export async function sendMedia(sessionId, to, buffer, mimetype, filename, capti
 
   const jid = to.includes('@') ? to : `${to}@s.whatsapp.net`;
 
-  // Read all unread messages (lightweight, non-blocking)
-  try {
-    console.log('[sendMedia] Calling readAllMessages...');
-    await readAllMessages(sessionId, jid);
-    console.log('[sendMedia] readAllMessages done');
-  } catch (err) {
-    console.log('[sendMedia] readAllMessages error (ignored):', err.message);
-  }
+  // Auto read - mark chat as read in database
+  await readAllMessages(sessionId, jid);
 
   const mediaType = getMediaType(mimetype);
   let message;
@@ -186,45 +170,48 @@ export async function sendMedia(sessionId, to, buffer, mimetype, filename, capti
   // Resize image if too large (for old CPU servers)
   if (mediaType === 'image' && buffer.length > 500000) {
     try {
-      console.log('[sendMedia] Resizing image...');
       processedBuffer = await sharp(buffer)
         .resize({ width: 1280, height: 1280, fit: 'inside' })
         .jpeg({ quality: 80 })
         .toBuffer();
-      console.log('[sendMedia] Resized to', Math.round(processedBuffer.length / 1024), 'KB');
     } catch (err) {
-      console.error('[sendMedia] Resize failed:', err.message);
       processedBuffer = buffer;
     }
   }
 
   if (mediaType === 'image') {
-    message = { image: processedBuffer, mimetype, fileName: filename, ...(caption ? { caption } : {}) };
+    message = { image: processedBuffer, mimetype, ...(caption ? { caption } : {}) };
   } else if (mediaType === 'video') {
-    message = { video: processedBuffer, mimetype, fileName: filename, ...(caption ? { caption } : {}) };
+    message = { video: processedBuffer, mimetype, ...(caption ? { caption } : {}) };
   } else if (mediaType === 'audio') {
     message = { audio: processedBuffer, mimetype, ptt: mimetype.includes('ogg') };
-  } else if (mediaType === 'document') {
-    message = { document: processedBuffer, mimetype, fileName: filename, ...(caption ? { caption } : {}) };
   } else {
-    message = { document: processedBuffer, mimetype, fileName: filename };
+    message = { document: processedBuffer, mimetype, fileName: filename, ...(caption ? { caption } : {}) };
   }
 
-  console.log('[sendMedia] Calling sendMessage...');
-  const result = await session.socket.sendMessage(jid, message);
-  console.log('[sendMedia] sendMessage done, id:', result?.key?.id);
-
-  if (result?.key?.id) {
-    await saveOutgoingMessage(sessionId, jid, caption || `[${mediaType}]`, mediaType);
+  // Retry logic for sendMessage
+  let lastError;
+  for (let attempt = 1; attempt <= 3; attempt++) {
+    try {
+      const result = await session.socket.sendMessage(jid, message);
+      if (result?.key?.id) {
+        await saveOutgoingMessage(sessionId, jid, caption || `[${mediaType}]`, mediaType);
+      }
+      return result;
+    } catch (err) {
+      lastError = err;
+      console.error(`sendMessage attempt ${attempt} failed:`, err.message);
+      if (attempt < 3) {
+        await sleep(1000 * attempt); // Wait 1s, 2s before retry
+      }
+    }
   }
 
-  console.log('[sendMedia] END');
-  return result;
+  throw lastError;
 }
 
 /**
  * Send multiple media files sequentially
- * Caption is only applied to the last media file
  */
 export async function sendMultipleMedia(sessionId, to, files, caption = null, reply_to = null) {
   const results = [];
@@ -234,29 +221,15 @@ export async function sendMultipleMedia(sessionId, to, files, caption = null, re
     const file = files[i];
     try {
       const fileCaption = (i === lastIndex) ? caption : null;
-
-      const result = await sendMedia(
-        sessionId,
-        to,
-        file.buffer,
-        file.mimetype,
-        file.filename,
-        fileCaption,
-        reply_to
-      );
-
-      if (result) {
-        results.push(result);
-      }
+      const result = await sendMedia(sessionId, to, file.buffer, file.mimetype, file.filename, fileCaption, reply_to);
+      if (result) results.push(result);
 
       if (i < lastIndex) {
-        const delayMin = parseInt(process.env.MEDIA_SEND_DELAY_MIN || '500');
-        const delayMax = parseInt(process.env.MEDIA_SEND_DELAY_MAX || '1000');
-        const delay = Math.floor(Math.random() * (delayMax - delayMin + 1)) + delayMin;
+        const delay = Math.floor(Math.random() * 500) + 500;
         await sleep(delay);
       }
     } catch (err) {
-      console.error('[SEND-MULTIPLE] Failed to send file:', err.message);
+      console.error('Failed to send file:', err.message);
     }
   }
 
