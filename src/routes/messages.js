@@ -179,87 +179,43 @@ export async function messageRoutes(fastify) {
     });
     if (!session) return reply.code(404).send({ error: 'Session not found' });
 
-    // Get fields from body - with attachFieldsToBody, fields have .value property
     let to = request.body?.to;
     let caption = request.body?.caption || '';
     let reply_to = request.body?.reply_to || null;
 
-    // Extract value from field object (attachFieldsToBody format)
-    if (to && typeof to === 'object' && to.value !== undefined) {
-      to = to.value;
-    }
-    if (caption && typeof caption === 'object' && caption.value !== undefined) {
-      caption = caption.value;
-    }
-    if (reply_to && typeof reply_to === 'object' && reply_to.value !== undefined) {
-      reply_to = reply_to.value;
-    }
+    if (to && typeof to === 'object' && to.value !== undefined) to = to.value;
+    if (caption && typeof caption === 'object' && caption.value !== undefined) caption = caption.value;
+    if (reply_to && typeof reply_to === 'object' && reply_to.value !== undefined) reply_to = reply_to.value;
 
-    console.log('[SEND-MULTIPLE] Parsed - to:', to, 'caption:', caption);
+    if (!to) return reply.code(400).send({ error: 'to (phone number) is required' });
 
-    if (!to) {
-      return reply.code(400).send({ error: 'to (phone number) is required' });
-    }
-
-    // Get files from body
     const files = [];
     if (request.body?.files) {
       const filesArray = Array.isArray(request.body.files) ? request.body.files : [request.body.files];
       for (const fileField of filesArray) {
         if (fileField && fileField.file) {
-          try {
-            const buffer = await fileField.toBuffer();
-            files.push({
-              buffer,
-              mimetype: fileField.mimetype,
-              filename: fileField.filename
-            });
-            console.log('[SEND-MULTIPLE] File buffered:', fileField.filename, buffer.length, 'bytes');
-          } catch (err) {
-            console.error('[SEND-MULTIPLE] Failed to buffer file:', err.message);
-          }
+          const buffer = await fileField.toBuffer();
+          files.push({ buffer, mimetype: fileField.mimetype, filename: fileField.filename });
         }
       }
     }
 
-    // Fallback: try request.files()
     if (files.length === 0) {
-      console.log('[SEND-MULTIPLE] No files from body, trying request.files()...');
       const fileParts = request.files();
       for await (const part of fileParts) {
         if (part.filename) {
-          try {
-            const buffer = await part.toBuffer();
-            files.push({
-              buffer,
-              mimetype: part.mimetype,
-              filename: part.filename
-            });
-            console.log('[SEND-MULTIPLE] File buffered from parts:', part.filename, buffer.length, 'bytes');
-          } catch (err) {
-            console.error('[SEND-MULTIPLE] Failed to buffer file from parts:', err.message);
-          }
+          const buffer = await part.toBuffer();
+          files.push({ buffer, mimetype: part.mimetype, filename: part.filename });
         }
       }
     }
 
-    console.log('[SEND-MULTIPLE] Total files:', files.length);
-
-    if (files.length === 0) {
-      return reply.code(400).send({ error: 'No files uploaded' });
-    }
+    if (files.length === 0) return reply.code(400).send({ error: 'No files uploaded' });
 
     try {
-      console.log('[SEND-MULTIPLE] Calling sendMultipleMedia...');
       const results = await sendMultipleMedia(session.id, to, files, caption, reply_to);
-      console.log('[SEND-MULTIPLE] Completed, sent:', results.length, 'files');
-      return {
-        sent: results.length,
-        message_ids: results.map(r => r.key?.id)
-      };
+      return { sent: results.length, message_ids: results.map(r => r.key?.id) };
     } catch (err) {
-      console.error('[SEND-MULTIPLE] Route error:', err.message);
-      console.error('[SEND-MULTIPLE] Stack:', err.stack);
       return reply.code(400).send({ error: err.message });
     }
   });

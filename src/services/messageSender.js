@@ -203,40 +203,24 @@ function normalizeJID(jid) {
 
 /**
  * Send single media file
- * @param {string} sessionId - Session ID
- * @param {string} to - Phone number
- * @param {Buffer} buffer - File buffer
- * @param {string} mimetype - MIME type
- * @param {string} filename - Original filename
- * @param {string} caption - Optional caption
- * @param {string} reply_to - Optional reply message ID
  */
 export async function sendMedia(sessionId, to, buffer, mimetype, filename, caption = null, reply_to = null) {
-  console.log('[sendMedia] Starting...');
-
   const session = getSession(sessionId);
-  console.log('[sendMedia] Session:', session ? 'found' : 'not found', 'Status:', session?.status);
-
   if (!session || session.status !== 'connected') {
     throw new Error('Session not connected');
   }
 
   const jid = to.includes('@') ? to : `${to}@s.whatsapp.net`;
-  console.log('[sendMedia] JID:', jid);
 
-  // Read all unread messages before sending (non-blocking)
+  // Read all unread messages before sending (non-blocking, currently disabled)
   try {
-    console.log('[sendMedia] Calling readAllMessages...');
     await readAllMessages(sessionId, jid);
-    console.log('[sendMedia] readAllMessages completed');
   } catch (err) {
-    console.log('[sendMedia] readAllMessages error (continuing):', err.message);
+    // Ignore
   }
 
-  console.log('[sendMedia] Determining media type...');
-  let message;
   const mediaType = getMediaType(mimetype);
-  console.log('[sendMedia] Media type:', mediaType);
+  let message;
 
   if (mediaType === 'image') {
     message = {
@@ -266,7 +250,6 @@ export async function sendMedia(sessionId, to, buffer, mimetype, filename, capti
       ...(caption ? { caption } : {})
     };
   } else {
-    // Default to document
     message = {
       document: buffer,
       mimetype,
@@ -274,55 +257,13 @@ export async function sendMedia(sessionId, to, buffer, mimetype, filename, capti
     };
   }
 
-  console.log('[sendMedia] About to call sendMessage...');
-  console.log('[sendMedia] Socket exists:', !!session.socket);
-  console.log('[sendMedia] Socket sendMessage exists:', typeof session.socket?.sendMessage);
-  console.log('[sendMedia] Buffer size:', buffer?.length, 'bytes');
-  console.log('[sendMedia] Mimetype:', mimetype);
-  console.log('[sendMedia] Filename:', filename);
+  const result = await session.socket.sendMessage(jid, message);
 
-  // Check socket state before sending
-  try {
-    console.log('[sendMedia] Checking socket auth state...');
-    const authState = session.socket.authState?.creds;
-    console.log('[sendMedia] Auth state exists:', !!authState);
-    if (authState) {
-      console.log('[sendMedia] Me ID:', authState.me?.id);
-      console.log('[sendMedia] Platform:', authState.platform);
-    }
-  } catch (authErr) {
-    console.error('[sendMedia] Auth state check failed:', authErr.message);
+  if (result?.key?.id) {
+    await saveOutgoingMessage(sessionId, jid, caption || `[${mediaType}]`, mediaType);
   }
 
-  try {
-    console.log('[sendMedia] Calling session.socket.sendMessage...');
-
-    // Use Promise.race with timeout to prevent hanging
-    const sendPromise = session.socket.sendMessage(jid, message);
-    const timeoutPromise = new Promise((_, reject) => {
-      setTimeout(() => reject(new Error('sendMessage timeout after 30s')), 30000);
-    });
-
-    const result = await Promise.race([sendPromise, timeoutPromise]);
-    console.log('[sendMedia] sendMessage completed, result:', result?.key?.id);
-
-    // Save outgoing message to chat history
-    if (result?.key?.id) {
-      console.log('[sendMedia] Saving outgoing message...');
-      await saveOutgoingMessage(sessionId, jid, caption || `[${mediaType}]`, mediaType);
-      console.log('[sendMedia] Message saved');
-    }
-
-    console.log('[sendMedia] Returning result');
-    return result;
-  } catch (err) {
-    console.error('[sendMedia] CRITICAL ERROR:', err.message);
-    console.error('[sendMedia] Error type:', err.constructor.name);
-    console.error('[sendMedia] Full error:', err);
-    console.error('[sendMedia] Stack:', err.stack);
-    console.error('[sendMedia] Socket state:', session.socket?.chats?.length);
-    throw err;
-  }
+  return result;
 }
 
 /**
@@ -333,14 +274,9 @@ export async function sendMultipleMedia(sessionId, to, files, caption = null, re
   const results = [];
   const lastIndex = files.length - 1;
 
-  console.log('[SEND-MULTIPLE] Starting to send', files.length, 'media files');
-
   for (let i = 0; i < files.length; i++) {
     const file = files[i];
     try {
-      console.log('[SEND-MULTIPLE] Sending file', i + 1, 'of', files.length, ':', file.filename);
-
-      // Only add caption to the last media file
       const fileCaption = (i === lastIndex) ? caption : null;
 
       const result = await sendMedia(
@@ -355,28 +291,19 @@ export async function sendMultipleMedia(sessionId, to, files, caption = null, re
 
       if (result) {
         results.push(result);
-        console.log('[SEND-MULTIPLE] File', i + 1, 'sent successfully, message ID:', result.key?.id);
-      } else {
-        console.error('[SEND-MULTIPLE] File', i + 1, 'returned null result');
       }
 
-      // Delay between messages (except after the last one)
       if (i < lastIndex) {
         const delayMin = parseInt(process.env.MEDIA_SEND_DELAY_MIN || '500');
         const delayMax = parseInt(process.env.MEDIA_SEND_DELAY_MAX || '1000');
         const delay = Math.floor(Math.random() * (delayMax - delayMin + 1)) + delayMin;
-        console.log('[SEND-MULTIPLE] Waiting', delay, 'ms before next file...');
         await sleep(delay);
       }
     } catch (err) {
-      console.error('[SEND-MULTIPLE] Failed to send file', i + 1, ':', err.message);
-      console.error('[SEND-MULTIPLE] Stack:', err.stack);
-      // Continue with next file instead of throwing
-      // throw new Error(`Failed to send media ${file.filename}: ${err.message}`);
+      console.error('[SEND-MULTIPLE] Failed to send file:', err.message);
     }
   }
 
-  console.log('[SEND-MULTIPLE] Completed sending', results.length, 'of', files.length, 'files');
   return results;
 }
 
