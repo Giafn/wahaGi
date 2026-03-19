@@ -208,10 +208,26 @@ async function _initSocket(sessionId, userId) {
     status: 'connecting',
     qr: null,
     userId,
-    retryCount: 0
+    retryCount: 0,
+    store: null
   };
 
   registry.set(sessionId, entry);
+
+  // Create in-memory store
+  const store = {
+    chats: {},
+    contacts: {},
+    messages: {},
+    groupMetadata: {},
+    presences: {},
+    state: {},
+    keys: {
+      update: () => {},
+      get: () => {}
+    }
+  };
+  entry.store = store;
 
   const socket = makeWASocket({
     version,
@@ -222,7 +238,12 @@ async function _initSocket(sessionId, userId) {
       keys: makeCacheableSignalKeyStore(state.keys, logger)
     },
     browser: ['Baileys API', 'Chrome', '120.0.0'],
-    generateHighQualityLinkPreview: false
+    generateHighQualityLinkPreview: false,
+    // getMessage: async (key) => {
+    //   const jid = key.remoteJid;
+    //   const msg = store.messages[jid]?.find(m => m.key.id === key.id);
+    //   return msg?.message || undefined;
+    // }
   });
 
   entry.socket = socket;

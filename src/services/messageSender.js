@@ -276,21 +276,29 @@ export async function sendMedia(sessionId, to, buffer, mimetype, filename, capti
   console.log('[sendMedia] Mimetype:', mimetype);
   console.log('[sendMedia] Filename:', filename);
 
+  // Check socket state before sending
+  try {
+    console.log('[sendMedia] Checking socket auth state...');
+    const authState = session.socket.authState?.creds;
+    console.log('[sendMedia] Auth state exists:', !!authState);
+    if (authState) {
+      console.log('[sendMedia] Me ID:', authState.me?.id);
+      console.log('[sendMedia] Platform:', authState.platform);
+    }
+  } catch (authErr) {
+    console.error('[sendMedia] Auth state check failed:', authErr.message);
+  }
+
   try {
     console.log('[sendMedia] Calling session.socket.sendMessage...');
 
-    // Wrap sendMessage in try-catch with setImmediate to catch async errors
-    const result = await new Promise((resolve, reject) => {
-      try {
-        session.socket.sendMessage(jid, message)
-          .then(resolve)
-          .catch(reject);
-      } catch (syncErr) {
-        console.error('[sendMedia] Synchronous error:', syncErr.message);
-        reject(syncErr);
-      }
+    // Use Promise.race with timeout to prevent hanging
+    const sendPromise = session.socket.sendMessage(jid, message);
+    const timeoutPromise = new Promise((_, reject) => {
+      setTimeout(() => reject(new Error('sendMessage timeout after 30s')), 30000);
     });
 
+    const result = await Promise.race([sendPromise, timeoutPromise]);
     console.log('[sendMedia] sendMessage completed, result:', result?.key?.id);
 
     // Save outgoing message to chat history
