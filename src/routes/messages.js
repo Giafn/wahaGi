@@ -21,7 +21,7 @@ export async function messageRoutes(fastify) {
         type: 'object',
         required: ['to', 'text'],
         properties: {
-          to: { type: 'string', description: 'Phone number with country code' },
+          to: { type: 'string', description: 'WhatsApp LID (Legacy ID)' },
           text: { type: 'string' },
           reply_to: { type: 'string', nullable: true, description: 'Message ID to reply to' }
         }

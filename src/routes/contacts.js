@@ -3,7 +3,7 @@ import { prisma } from '../db/client.js';
 export async function contactRoutes(fastify) {
   fastify.addHook('preHandler', fastify.authenticate);
 
-  // GET /contacts - List all contacts with LID mapping
+  // GET /contacts - List all contacts with LID
   fastify.get('/', {
     schema: {
       tags: ['Contacts'],
@@ -15,8 +15,7 @@ export async function contactRoutes(fastify) {
             type: 'object',
             properties: {
               id: { type: 'string' },
-              jid: { type: 'string', description: 'Phone number or LID' },
-              lid: { type: 'string', nullable: true, description: 'WhatsApp LID' },
+              lid: { type: 'string', description: 'WhatsApp LID (primary identifier)' },
               name: { type: 'string', nullable: true },
               unread_count: { type: 'integer' },
               last_message_time: { type: 'integer', nullable: true }
@@ -33,7 +32,6 @@ export async function contactRoutes(fastify) {
 
     return contacts.map(c => ({
       id: c.id,
-      jid: c.jid,
       lid: c.lid,
       name: c.name,
       unread_count: c.unreadCount,
@@ -41,8 +39,59 @@ export async function contactRoutes(fastify) {
     }));
   });
 
-  // PUT /contacts/:id/phone - Update LID to phone number mapping
-  fastify.put('/:id/phone', {
+  // GET /contacts/:id - Get single contact by database ID
+  fastify.get('/:id', {
+    schema: {
+      tags: ['Contacts'],
+      security: [{ bearerAuth: [] }],
+      params: {
+        type: 'object',
+        required: ['id'],
+        properties: {
+          id: { type: 'string', format: 'uuid' }
+        }
+      },
+      response: {
+        200: {
+          type: 'object',
+          properties: {
+            id: { type: 'string' },
+            lid: { type: 'string' },
+            name: { type: 'string', nullable: true },
+            unread_count: { type: 'integer' },
+            last_message_time: { type: 'integer', nullable: true }
+          }
+        },
+        404: {
+          type: 'object',
+          properties: {
+            error: { type: 'string' }
+          }
+        }
+      }
+    }
+  }, async (request, reply) => {
+    const { id } = request.params;
+
+    const contact = await prisma.chat.findUnique({
+      where: { id }
+    });
+
+    if (!contact) {
+      return reply.code(404).send({ error: 'Contact not found' });
+    }
+
+    return {
+      id: contact.id,
+      lid: contact.lid,
+      name: contact.name,
+      unread_count: contact.unreadCount,
+      last_message_time: contact.lastMessageTime?.getTime() || null
+    };
+  });
+
+  // PUT /contacts/:id/name - Update name for a contact
+  fastify.put('/:id/name', {
     schema: {
       tags: ['Contacts'],
       security: [{ bearerAuth: [] }],
@@ -55,9 +104,9 @@ export async function contactRoutes(fastify) {
       },
       body: {
         type: 'object',
-        required: ['phone'],
+        required: ['name'],
         properties: {
-          phone: { type: 'string', description: 'Real phone number (e.g., 628123456789)' }
+          name: { type: 'string', description: 'Contact name' }
         }
       },
       response: {
@@ -72,44 +121,26 @@ export async function contactRoutes(fastify) {
     }
   }, async (request, reply) => {
     const { id } = request.params;
-    const { phone } = request.body;
+    const { name } = request.body;
 
-    // Validate phone number format
-    const cleanPhone = phone.replace(/[^0-9]/g, '');
-    if (cleanPhone.length < 10 || cleanPhone.length > 15) {
+    if (!name || name.trim().length === 0) {
       return reply.code(400).send({
         success: false,
-        message: 'Invalid phone number format'
+        message: 'Name is required'
       });
     }
 
     try {
-      // Update chat jid to phone number
       await prisma.chat.update({
         where: { id },
         data: {
-          jid: cleanPhone,
-          name: cleanPhone
+          name: name.trim()
         }
       });
 
-      // Update all chat history from LID to phone number
-      const chat = await prisma.chat.findUnique({ where: { id } });
-      if (chat?.lid) {
-        await prisma.chatHistory.updateMany({
-          where: {
-            sessionId: request.user.id,
-            from: chat.lid
-          },
-          data: {
-            from: cleanPhone
-          }
-        });
-      }
-
       return {
         success: true,
-        message: `Updated contact from ${chat?.lid || chat?.jid} to ${cleanPhone}`
+        message: `Updated name for contact ${id}`
       };
     } catch (err) {
       return reply.code(500).send({
@@ -119,51 +150,52 @@ export async function contactRoutes(fastify) {
     }
   });
 
-  // GET /contacts/unmapped - List contacts with LID but no phone mapping
-  fastify.get('/unmapped', {
+  // DELETE /contacts/:id - Delete a contact
+  fastify.delete('/:id', {
     schema: {
       tags: ['Contacts'],
       security: [{ bearerAuth: [] }],
+      params: {
+        type: 'object',
+        required: ['id'],
+        properties: {
+          id: { type: 'string', format: 'uuid' }
+        }
+      },
       response: {
         200: {
-          type: 'array',
-          items: {
-            type: 'object',
-            properties: {
-              id: { type: 'string' },
-              jid: { type: 'string' },
-              lid: { type: 'string' },
-              name: { type: 'string' },
-              message_count: { type: 'integer' }
-            }
+          type: 'object',
+          properties: {
+            success: { type: 'boolean' },
+            message: { type: 'string' }
+          }
+        },
+        404: {
+          type: 'object',
+          properties: {
+            error: { type: 'string' }
           }
         }
       }
     }
-  }, async (request) => {
-    // Find chats where jid looks like LID (15+ digits)
-    const unmapped = await prisma.chat.findMany({
-      where: {
-        sessionId: request.user.id,
-        jid: {
-          gte: '100000000000000', // 15 digits minimum
-          lt: '1000000000000000' // 16 digits maximum
-        }
-      },
-      include: {
-        _count: {
-          select: { messages: true }
-        }
-      },
-      orderBy: [{ lastMessageTime: 'desc' }]
+  }, async (request, reply) => {
+    const { id } = request.params;
+
+    const contact = await prisma.chat.findUnique({
+      where: { id }
     });
 
-    return unmapped.map(c => ({
-      id: c.id,
-      jid: c.jid,
-      lid: c.lid,
-      name: c.name,
-      message_count: c._count.messages
-    }));
+    if (!contact) {
+      return reply.code(404).send({ error: 'Contact not found' });
+    }
+
+    await prisma.chat.delete({
+      where: { id }
+    });
+
+    return {
+      success: true,
+      message: `Deleted contact ${id}`
+    };
   });
 }

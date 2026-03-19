@@ -14,343 +14,31 @@ import pino from 'pino';
 
 const logger = pino({ level: process.env.DEBUG === 'true' ? 'info' : 'silent' });
 const AUTH_DIR = process.env.AUTH_DIR || './auth';
-const MAX_HISTORY = parseInt(process.env.MAX_HISTORY_MESSAGES || '20');
 
-// Cache for mapping LID to phone number: { [sessionId]: Map<lid, phoneNumber> }
-const contactCache = new Map();
+// In-memory registry: sessionId -> { socket, qr, status }
+const registry = new Map();
 
-// Persistent cache for resolved LIDs: { [sessionId]: Map<lid, {phone, timestamp}> }
-const lidResolutionCache = new Map();
-const LID_CACHE_TTL = 24 * 60 * 60 * 1000; // 24 hours
+// Track processed message IDs to prevent duplicates
+const processedMessages = new Map();
 
 /**
- * Normalize JID to consistent format (phone number only)
- * Uses multiple methods to extract correct phone number
+ * Normalize JID to LID format (WhatsApp ID)
+ * Extracts the ID part from JID (e.g., 628xxx@s.whatsapp.net -> 628xxx, 231xxx@lid -> 231xxx)
  *
  * @param {string} jid - WhatsApp JID (e.g., 628xxx@s.whatsapp.net or 231xxx@lid)
- * @param {string} sessionId - Session ID for cache lookup
- * @param {object} msg - Full message object for senderPn extraction
- * @returns {string} Normalized phone number
+ * @returns {string} Normalized LID
  */
-export function normalizeJID(jid, sessionId = null, msg = null) {
+export function normalizeJID(jid) {
   if (!jid) return '';
-
-  // Method 1: Use senderPn from message (MOST RELIABLE)
-  if (msg) {
-    const senderPn = msg.key?.senderPn || msg.senderPn;
-    if (senderPn && senderPn.includes('@s.whatsapp.net')) {
-      let phone = senderPn.split('@')[0];
-      phone = phone.replace(/^\+/, '').replace(/[^0-9]/g, '');
-
-      // Fix Indonesian mobile numbers (add missing "9" or "8")
-      // Pattern: 62 + XX (area code) + 9/8 + 7-8 digits = 12-14 digits
-      // Example: 6281234567890 (Telkomsel), 6289668376597 (Tri)
-      if (phone.startsWith('62') && phone.length === 11 && !['8', '9'].includes(phone[2])) {
-        // Insert "8" or "9" after area code if missing
-        phone = phone.slice(0, 2) + '8' + phone.slice(2);
-        log(`📞 Fixed senderPn: ${senderPn.split('@')[0]} → ${phone} (added missing digit)`);
-      }
-
-      log(`✅ Using senderPn: ${phone}`);
-      return phone;
-    }
-  }
-
-  // Method 2: Extract from JID
-  let phone = jid.split('@')[0];
-  phone = phone.replace(/^\+/, '').replace(/[^0-9]/g, '');
-
-  // Method 3: Handle @lid suffix
-  if (jid.includes('@lid')) {
-    log(`⚠️ Detected @lid suffix: ${jid}`);
-
-    // If we have participant field, use that instead
-    if (msg?.participant || msg?.key?.participant) {
-      const participant = msg.participant || msg.key.participant;
-      const participantPhone = participant.split('@')[0].replace(/^\+/, '').replace(/[^0-9]/g, '');
-      if (participantPhone.length >= 10 && participantPhone.length <= 15) {
-        log(`✅ Using participant instead: ${participantPhone}`);
-        return participantPhone;
-      }
-    }
-
-    // Try to check cache
-    if (sessionId && contactCache.has(sessionId)) {
-      const cached = contactCache.get(sessionId).get(phone);
-      if (cached) {
-        log(`📞 Resolved LID ${phone} → ${cached} from cache`);
-        return cached;
-      }
-    }
-
-    log(`⚠️ Could not resolve @lid, keeping as: ${phone}`);
-  }
-
-  // Validate phone number length (E.164: 10-15 digits)
-  if (phone.length < 10 || phone.length > 15) {
-    log(`⚠️ Suspicious phone number: ${phone} (length: ${phone.length})`);
-    log(`   Original JID: ${jid}`);
-  }
-
-  return phone;
+  return jid.split('@')[0].replace(/^\+/, '').replace(/[^0-9]/g, '');
 }
 
 /**
- * Update contact cache with LID to phone mapping
+ * Convert LID to proper JID format for sending
  */
-export function updateContactCache(sessionId, lid, phoneNumber) {
-  if (!contactCache.has(sessionId)) {
-    contactCache.set(sessionId, new Map());
-  }
-  contactCache.get(sessionId).set(lid, phoneNumber);
-  console.log(`[ContactCache] Updated: ${lid} → ${phoneNumber}`);
-}
-
-/**
- * Get contact from cache by LID
- */
-export function getContactByLID(sessionId, lid) {
-  if (!contactCache.has(sessionId)) return null;
-  return contactCache.get(sessionId).get(lid);
-}
-
-/**
- * Get resolved LID from persistent cache
- */
-export function getCachedLIDResolution(sessionId, lid) {
-  if (!lidResolutionCache.has(sessionId)) return null;
-
-  const cached = lidResolutionCache.get(sessionId).get(lid);
-  if (!cached) return null;
-
-  // Check if cache is still valid (not expired)
-  if (Date.now() - cached.timestamp > LID_CACHE_TTL) {
-    log(`⏰ LID cache expired for ${lid}`);
-    lidResolutionCache.get(sessionId).delete(lid);
-    return null;
-  }
-
-  return cached.phone;
-}
-
-/**
- * Cache resolved LID persistently
- */
-export function cacheLIDResolution(sessionId, lid, phoneNumber) {
-  if (!lidResolutionCache.has(sessionId)) {
-    lidResolutionCache.set(sessionId, new Map());
-  }
-  lidResolutionCache.get(sessionId).set(lid, {
-    phone: phoneNumber,
-    timestamp: Date.now()
-  });
-  log(`💾 Cached LID resolution: ${lid} → ${phoneNumber} (24h)`);
-}
-
-/**
- * Resolve LID to phone number using multiple methods
- * Results are cached for 24 hours to avoid repeated API calls
- */
-export async function resolveLID(sessionId, lid, msg = null) {
-  // Check persistent cache FIRST - only resolve once per LID
-  const cached = getCachedLIDResolution(sessionId, lid);
-  if (cached) {
-    log(`📞 ✅ Resolved from cache: ${lid} → ${cached}`);
-    return cached;
-  }
-
-  let resolved = null;
-
-  // Method 1: Check recent outgoing messages (last 24 hours)
-  const recentOutgoing = await prisma.chatHistory.findMany({
-    where: {
-      sessionId,
-      isFromMe: true,
-      timestamp: {
-        gte: new Date(Date.now() - (24 * 60 * 60 * 1000))
-      }
-    },
-    orderBy: [{ timestamp: 'desc' }],
-    take: 50,
-    distinct: ['from']
-  });
-
-  if (recentOutgoing.length > 0) {
-    const lastOutgoingPhone = recentOutgoing[0].from;
-    const lastOutgoingTime = recentOutgoing[0].timestamp;
-    const msgTime = msg ? new Date(msg.messageTimestamp * 1000) : new Date();
-    const timeDiff = Math.abs(msgTime.getTime() - lastOutgoingTime.getTime());
-
-    if (timeDiff < 5 * 60 * 1000) {
-      resolved = lastOutgoingPhone;
-      updateContactCache(sessionId, lid, resolved);
-      log(`📞 ✅ Resolved via Method 1 (recent): ${lid} → ${resolved}`);
-      return resolved;
-    }
-  }
-
-  // Method 2: Check existing chats in database (match by lid)
-  const existingChats = await prisma.chat.findMany({
-    where: { sessionId }
-  });
-
-  for (const chat of existingChats) {
-    if (chat.lid === lid) {
-      resolved = chat.jid;
-      log(`📞 ✅ Resolved via Method 2 (chat lid): ${lid} → ${resolved}`);
-      return resolved;
-    }
-  }
-
-  // Method 3: Check temporary contact cache
-  const cachedContact = getContactByLID(sessionId, lid);
-  if (cachedContact && cachedContact.length >= 10 && cachedContact.length < 15) {
-    resolved = cachedContact;
-    log(`📞 ✅ Resolved via Method 3 (contact cache): ${lid} → ${resolved}`);
-    return resolved;
-  }
-
-  // Method 4: Try to get from msg.senderPn directly
-  if (msg?.key?.senderPn) {
-    const senderPn = msg.key.senderPn.split('@')[0].replace(/[^0-9]/g, '');
-    // Check if this is a real phone number (10-14 digits) or LID (15+ digits)
-    if (senderPn.length >= 10 && senderPn.length < 15) {
-      resolved = senderPn;
-      updateContactCache(sessionId, lid, resolved);
-      cacheLIDResolution(sessionId, lid, resolved);
-      log(`📞 ✅ Resolved via Method 4 (senderPn): ${lid} → ${resolved}`);
-      return resolved;
-    } else if (senderPn.length >= 15) {
-      // This is also a LID, cache it for future
-      log(`⚠️ senderPn is also LID: ${senderPn}`);
-      lid = senderPn; // Use this LID instead
-    }
-  }
-
-  // Method 5: Fetch group metadata to resolve member LID
-  const isGroup = msg?.key?.remoteJid?.includes('@g.us');
-  if (isGroup && lid.length >= 15) {
-    const session = getSession(sessionId);
-    if (session?.socket) {
-      try {
-        const groupJid = msg.key.remoteJid;
-        log(`🔍 Method 5: Fetching group metadata for ${groupJid}...`);
-
-        // Fetch group metadata
-        const groupMetadata = await session.socket.groupMetadata(groupJid);
-
-        if (groupMetadata?.participants) {
-          log(`👥 Group has ${groupMetadata.participants.length} participants`);
-
-          // Find participant with matching LID
-          const participant = groupMetadata.participants.find(p => {
-            const pId = p.id?.split('@')[0];
-            return pId === lid;
-          });
-
-          if (participant) {
-            // Extract phone number from participant JID
-            const phoneFromJid = participant.id.split('@')[0];
-            if (phoneFromJid.length >= 10 && phoneFromJid.length < 15) {
-              resolved = phoneFromJid;
-              updateContactCache(sessionId, lid, resolved);
-              cacheLIDResolution(sessionId, lid, resolved);
-              log(`📞 ✅ Resolved via Method 5 (groupMetadata): ${lid} → ${resolved}`);
-              return resolved;
-            }
-
-            // Check if participant has secondary phone number
-            if (participant.secondaryPhone) {
-              resolved = participant.secondaryPhone.replace(/[^0-9]/g, '');
-              updateContactCache(sessionId, lid, resolved);
-              cacheLIDResolution(sessionId, lid, resolved);
-              log(`📞 ✅ Resolved via Method 5 (secondaryPhone): ${lid} → ${resolved}`);
-              return resolved;
-            }
-          }
-
-          // Alternative: Search all participants for phone number
-          for (const p of groupMetadata.participants) {
-            const pId = p.id?.split('@')[0];
-            if (pId && pId.length >= 10 && pId.length < 15) {
-              // Cache this participant's phone number
-              updateContactCache(sessionId, pId, pId);
-              cacheLIDResolution(sessionId, pId, pId);
-            }
-          }
-        }
-      } catch (err) {
-        log(`⚠️ Method 5 (groupMetadata) failed: ${err.message}`);
-      }
-    }
-  }
-
-  // Method 6: Fetch contact from WhatsApp using onWhatsApp()
-  const session2 = getSession(sessionId);
-  if (session2?.socket) {
-    try {
-      log(`🔍 Method 6: Fetching contact from WhatsApp for LID: ${lid}...`);
-
-      // Try to get contact info from Baileys store first
-      const contacts = session2.store?.contacts || {};
-      for (const [jid, contact] of Object.entries(contacts)) {
-        const contactLid = jid.split('@')[0];
-        if (contactLid === lid && contact.notify) {
-          const potential = contact.notify.replace(/[^0-9]/g, '');
-          if (potential.length >= 10 && potential.length < 15) {
-            resolved = potential;
-            updateContactCache(sessionId, lid, resolved);
-            cacheLIDResolution(sessionId, lid, resolved);
-            log(`📞 ✅ Resolved via Method 6 (contact.notify): ${lid} → ${resolved}`);
-            return resolved;
-          }
-        }
-      }
-
-      // Try onWhatsApp() to verify and get phone number
-      const jidWithSuffix = `${lid}@s.whatsapp.net`;
-      const result = await session2.socket.onWhatsApp(jidWithSuffix);
-
-      if (result && result.length > 0 && result[0].exists) {
-        const phoneFromJid = result[0].jid.split('@')[0];
-        if (phoneFromJid.length >= 10 && phoneFromJid.length < 15) {
-          resolved = phoneFromJid;
-          updateContactCache(sessionId, lid, resolved);
-          cacheLIDResolution(sessionId, lid, resolved);
-          log(`📞 ✅ Resolved via Method 6 (onWhatsApp): ${lid} → ${resolved}`);
-          return resolved;
-        }
-      }
-    } catch (err) {
-      log(`⚠️ Method 6 failed: ${err.message}`);
-    }
-  }
-
-  // Method 7: Populate cache from all existing contacts for future use
-  const session3 = getSession(sessionId);
-  if (session3?.store?.contacts) {
-    const contacts = session3.store.contacts || {};
-    for (const [jid, contact] of Object.entries(contacts)) {
-      if (contact.notify) {
-        const potential = contact.notify.replace(/[^0-9]/g, '');
-        if (potential.length >= 10 && potential.length < 15) {
-          const contactLid = jid.split('@')[0];
-          updateContactCache(sessionId, contactLid, potential);
-        }
-      }
-    }
-  }
-
-  log(`⚠️ Could not resolve LID ${lid} - no matching contact found`);
-  return null;
-}
-
-/**
- * Convert phone number to proper JID format for sending
- */
-function toJID(phoneNumber) {
-  if (!phoneNumber) return '';
-  const clean = phoneNumber.replace(/[^0-9]/g, '');
+function toJID(lid) {
+  if (!lid) return '';
+  const clean = lid.replace(/[^0-9]/g, '');
   if (clean.includes('@')) return clean;
   return `${clean}@s.whatsapp.net`;
 }
@@ -362,9 +50,6 @@ const log = (msg, ...args) => {
   }
 };
 
-// In-memory registry: sessionId -> { socket, qr, status }
-const registry = new Map();
-
 export function getSession(sessionId) {
   return registry.get(sessionId);
 }
@@ -374,12 +59,10 @@ export function getAllActiveSessions() {
 }
 
 export async function createSession(sessionId, userId) {
-  // If already running, return existing
   if (registry.has(sessionId)) {
     const existing = registry.get(sessionId);
     return { status: existing.status, qr: existing.qr };
   }
-
   return await _initSocket(sessionId, userId);
 }
 
@@ -394,8 +77,6 @@ export async function deleteSession(sessionId) {
     } catch {}
     registry.delete(sessionId);
   }
-
-  // Remove auth files
   const authPath = path.join(AUTH_DIR, sessionId);
   try {
     await fs.rm(authPath, { recursive: true, force: true });
@@ -403,12 +84,10 @@ export async function deleteSession(sessionId) {
 }
 
 export async function restoreAllSessions() {
-  // On startup, reload all connected sessions from DB
   try {
     const sessions = await prisma.session.findMany({
       where: { status: { in: ['connected', 'qr'] } }
     });
-
     log(`Restoring ${sessions.length} session(s)...`);
 
     for (const session of sessions) {
@@ -419,7 +98,6 @@ export async function restoreAllSessions() {
         log(`Session ${session.id} restored`);
       } catch (err) {
         log(`Failed to restore session ${session.id}: ${err.message}`);
-        // Auth dir missing, mark as disconnected
         await prisma.session.update({
           where: { id: session.id },
           data: { status: 'disconnected' }
@@ -462,7 +140,6 @@ async function _initSocket(sessionId, userId) {
 
   entry.socket = socket;
 
-  // ---- QR ----
   socket.ev.on('connection.update', async (update) => {
     const { connection, lastDisconnect, qr } = update;
 
@@ -490,9 +167,6 @@ async function _initSocket(sessionId, userId) {
         data: { status: 'disconnected' }
       }).catch(() => {});
 
-      // Session status updates via API only - no webhook
-      // await dispatchWebhook(sessionId, { event: 'session.update', status: 'disconnected', reason });
-
       if (shouldReconnect && entry.retryCount < 5) {
         entry.retryCount++;
         const delay = Math.min(1000 * Math.pow(2, entry.retryCount), 30000);
@@ -511,52 +185,28 @@ async function _initSocket(sessionId, userId) {
       entry.qr = null;
       entry.retryCount = 0;
 
-      // Populate contact cache from Baileys contacts
-      if (entry.store?.contacts) {
-        const contacts = entry.store.contacts || {};
-        Object.entries(contacts).forEach(([jid, contact]) => {
-          if (contact.notify && jid.includes('@')) {
-            const lid = jid.split('@')[0];
-            const phoneNumber = contact.notify.replace(/[^0-9]/g, '');
-            if (phoneNumber.length < 15 && lid.length >= 15) {
-              updateContactCache(sessionId, lid, phoneNumber);
-            }
-          }
-        });
-        log(`📇 Loaded ${Object.keys(contacts).length} contacts to cache`);
-      }
-
       await prisma.session.update({
         where: { id: sessionId },
         data: { status: 'connected', lastSeen: new Date() }
       }).catch(() => {});
-
-      // Session status updates via API only - no webhook
-      // await dispatchWebhook(sessionId, { event: 'session.update', status: 'connected' });
     }
   });
 
-  // ---- Save creds ----
   socket.ev.on('creds.update', saveCreds);
 
-// Track processed message IDs to prevent duplicates
-const processedMessages = new Map();
-
-// Clean up old processed messages every 5 minutes
-setInterval(() => {
-  const now = Date.now();
-  for (const [key, timestamp] of processedMessages.entries()) {
-    if (now - timestamp > 60000) { // Remove after 1 minute
-      processedMessages.delete(key);
+  // Clean up old processed messages every 5 minutes
+  setInterval(() => {
+    const now = Date.now();
+    for (const [key, timestamp] of processedMessages.entries()) {
+      if (now - timestamp > 60000) {
+        processedMessages.delete(key);
+      }
     }
-  }
-}, 60000);
+  }, 60000);
 
-  // ---- Incoming messages ----
   socket.ev.on('messages.upsert', async ({ messages, type }) => {
     log(`📨 Message event: type=${type}, count=${messages.length}`);
 
-    // Only process notify/append type (new messages)
     if (type !== 'notify' && type !== 'append') {
       log(`⚠️ Skipping message type: ${type}`);
       return;
@@ -568,7 +218,6 @@ setInterval(() => {
       const msgType = getMessageType(msg);
       const isFromMe = msg.key.fromMe;
 
-      // Skip if already processed (prevent duplicates)
       const processKey = `${sessionId}:${msgId}`;
       if (processedMessages.has(processKey)) {
         log(`⏭️ Skipping duplicate message: ${msgId}`);
@@ -576,146 +225,24 @@ setInterval(() => {
       }
       processedMessages.set(processKey, Date.now());
 
-      // Skip saving outgoing messages - already saved by sendText
       if (isFromMe) {
         log(`⏭️ Skipping outgoing message (already saved)`);
         continue;
       }
 
-      // First resolve phone number from LID using enhanced normalization
-      let phoneNumber = normalizeJID(jid, sessionId, msg);
-      let lid = null;
-
-      log(`🔍 Processing incoming: jid=${jid}, normalized=${phoneNumber}, length=${phoneNumber.length}`);
-
-      // Check if this is a group chat
+      const lid = normalizeJID(jid);
       const isGroup = jid.includes('@g.us');
 
-      if (isGroup) {
-        // For group chat, extract sender from participant field
-        const participant = msg.participant || msg.key.participant || msg.key.senderPn;
-        if (participant) {
-          lid = normalizeJID(participant, sessionId, msg);
-          log(`👥 Group chat - participant LID: ${participant} → ${lid}`);
+      log(`🔍 Processing incoming: jid=${jid}, lid=${lid}, isGroup=${isGroup}`);
 
-          // Try to resolve LID to phone number
-          const resolved = await resolveLID(sessionId, lid, msg);
-          if (resolved) {
-            phoneNumber = resolved;
-            log(`📞 ✅ Resolved group sender: ${lid} → ${phoneNumber}`);
-          } else {
-            phoneNumber = lid;
-            log(`⚠️ Could not resolve group sender LID, using: ${lid}`);
-          }
-        } else {
-          log(`⚠️ Group chat - no participant found, using group ID`);
-        }
-      }
+      await saveChatHistoryWithLID(sessionId, jid, msg, msgType, lid);
 
-      // If it's still a LID (15+ digits) for non-group, try to resolve
-      if (phoneNumber.length >= 15 && !isGroup) {
-        lid = phoneNumber;
-        let resolved = false;
-
-        // Method 1: Check recent outgoing messages
-        log(`🔍 Method 1: Looking for recent outgoing messages...`);
-        const recentOutgoing = await prisma.chatHistory.findMany({
-          where: {
-            sessionId,
-            isFromMe: true,
-            timestamp: {
-              gte: new Date(Date.now() - (24 * 60 * 60 * 1000))
-            }
-          },
-          orderBy: [{ timestamp: 'desc' }],
-          take: 20,
-          distinct: ['from']
-        });
-
-        log(`🔍 Found ${recentOutgoing.length} recent outgoing message(s)`);
-
-        if (recentOutgoing.length > 0) {
-          const lastOutgoingPhone = recentOutgoing[0].from;
-          const lastOutgoingTime = recentOutgoing[0].timestamp;
-          const msgTime = new Date(msg.messageTimestamp * 1000);
-          const timeDiff = Math.abs(msgTime.getTime() - lastOutgoingTime.getTime());
-
-          log(`🔍 Last outgoing: ${lastOutgoingPhone} at ${lastOutgoingTime.toISOString()}`);
-          log(`🔍 Time diff: ${Math.round(timeDiff/1000)}s (${Math.round(timeDiff/60000)} min)`);
-
-          if (timeDiff < 5 * 60 * 1000) {
-            phoneNumber = lastOutgoingPhone;
-            resolved = true;
-            updateContactCache(sessionId, lid, phoneNumber);
-            log(`📞 ✅ Resolved via Method 1 (recent conversation): ${lid} → ${phoneNumber}`);
-          }
-        }
-
-        // Method 2: Check existing chats in database
-        if (!resolved) {
-          log(`🔍 Method 2: Looking for matching chat in database...`);
-          const existingChats = await prisma.chat.findMany({
-            where: { sessionId }
-          });
-
-          log(`🔍 Found ${existingChats.length} existing chat(s)`);
-
-          // Check if any chat has this LID stored
-          for (const chat of existingChats) {
-            if (chat.lid === lid) {
-              phoneNumber = chat.jid;
-              resolved = true;
-              log(`📞 ✅ Resolved via Method 2 (existing chat lid): ${lid} → ${phoneNumber}`);
-              break;
-            }
-          }
-        }
-
-        // Method 3: Check Baileys contacts store
-        if (!resolved) {
-          log(`🔍 Method 3: Checking Baileys contacts store...`);
-          const session = getSession(sessionId);
-          if (session?.store?.contacts) {
-            const contact = session.store.contacts[jid];
-            if (contact) {
-              log(`🔍 Found contact: ${JSON.stringify(contact)}`);
-              // Try different contact fields for phone number
-              const phoneFields = ['notify', 'name', 'verifiedName', 'subject'];
-              for (const field of phoneFields) {
-                if (contact[field]) {
-                  const potential = contact[field].replace(/[^0-9]/g, '');
-                  if (potential.length >= 10 && potential.length < 15) {
-                    phoneNumber = potential;
-                    resolved = true;
-                    updateContactCache(sessionId, lid, phoneNumber);
-                    log(`📞 ✅ Resolved via Method 3 (contact.${field}): ${lid} → ${phoneNumber}`);
-                    break;
-                  }
-                }
-              }
-            }
-          }
-        }
-
-        // Fallback: Use LID as phone number
-        if (!resolved) {
-          log(`⚠️ Could not resolve LID ${lid}, using as phone number`);
-        }
-      } else {
-        log(`✅ Regular phone number: ${phoneNumber}`);
-      }
-
-      // Save incoming message to chat history with resolved phone number
-      await saveChatHistoryWithPhone(sessionId, jid, msg, msgType, phoneNumber, lid);
-
-      // Build webhook payload with resolved phone number
-      const payload = await buildWebhookPayloadWithPhone(msg, msgType, sessionId, phoneNumber);
-      log(`🔔 Dispatching webhook: event=${payload.event}, from=${jid}, phone=${phoneNumber}, type=${msgType}`);
+      const payload = await buildWebhookPayload(msg, msgType, sessionId, lid);
+      log(`🔔 Dispatching webhook: event=${payload.event}, from=${jid}, lid=${lid}, type=${msgType}`);
       await dispatchWebhook(sessionId, payload);
     }
   });
 
-  // ---- Handle message edits ----
   socket.ev.on('messages.update', async (updates) => {
     log(`📝 Messages update: ${updates?.length} updates`);
 
@@ -728,28 +255,20 @@ setInterval(() => {
 
       log(`✏️ Message edited: id=${msgId}, from=${jid}, isFromMe=${isFromMe}`);
 
-      // Update message in database
       try {
         const updatedMessage = update.update.message;
         const messageText = updatedMessage?.conversation ||
                            updatedMessage?.extendedTextMessage?.text ||
                            '[Edited media/caption]';
 
-        // Find and update the message in database
         const existingMsg = await prisma.chatHistory.findFirst({
-          where: {
-            sessionId,
-            message_id: msgId
-          }
+          where: { sessionId, message_id: msgId }
         });
 
         if (existingMsg) {
           await prisma.chatHistory.update({
             where: { id: existingMsg.id },
-            data: {
-              message: `${messageText} (edited)`,
-              // Optionally add edited_at field if you add it to schema
-            }
+            data: { message: `${messageText} (edited)` }
           });
           log(`✅ Updated message ${msgId} in database`);
         } else {
@@ -761,7 +280,6 @@ setInterval(() => {
     }
   });
 
-  // Also listen for m-receipt.update (message status)
   socket.ev.on('m-receipt.update', async (update) => {
     log('Receipt update:', update);
   });
@@ -772,39 +290,23 @@ setInterval(() => {
 function getMessageType(msg) {
   if (!msg.message) {
     log(`⚠️ Message has no message object: ${JSON.stringify(msg.key)}`);
-    return 'text'; // Default to text for unknown
+    return 'text';
   }
 
   const keys = Object.keys(msg.message);
 
-  // Text messages
   if (keys.includes('conversation')) return 'text';
   if (keys.includes('extendedTextMessage')) return 'text';
-
-  // Image messages
   if (keys.includes('imageMessage')) return 'image';
-
-  // Video messages
   if (keys.includes('videoMessage')) return 'video';
-
-  // Document messages
   if (keys.includes('documentMessage')) return 'document';
-
-  // Audio messages
   if (keys.includes('audioMessage')) return 'audio';
-
-  // Sticker messages
   if (keys.includes('stickerMessage')) return 'sticker';
-
-  // Contact messages
   if (keys.includes('contactMessage')) return 'contact';
   if (keys.includes('contactsArrayMessage')) return 'contact';
-
-  // Location messages
   if (keys.includes('locationMessage')) return 'location';
   if (keys.includes('liveLocationMessage')) return 'location';
 
-  // View once messages
   if (keys.includes('viewOnceMessage')) {
     const inner = msg.message.viewOnceMessage.message;
     if (inner) {
@@ -815,71 +317,20 @@ function getMessageType(msg) {
     return 'viewonce';
   }
 
-  // Reaction messages
   if (keys.includes('reactionMessage')) return 'reaction';
-
-  // Poll messages
   if (keys.includes('pollCreationMessage')) return 'poll';
   if (keys.includes('pollUpdateMessage')) return 'poll';
 
-  // Forwarded messages
   if (keys.includes('protocolMessage')) {
     const protocol = msg.message.protocolMessage;
-    if (protocol.type === 0) return 'revoke'; // Message revoked
+    if (protocol.type === 0) return 'revoke';
     return 'protocol';
   }
 
-  // Log unknown type for debugging
   log(`⚠️ Unknown message type. Keys: ${keys.join(', ')}`);
-  log(`   Full message structure: ${JSON.stringify(Object.keys(msg.message))}`);
-
-  return 'text'; // Default fallback
+  return 'text';
 }
 
-async function buildWebhookPayload(msg, type, sessionId) {
-  const jid = msg.key.remoteJid;
-  // Extract actual phone number from JID (remove @s.whatsapp.net, @g.us, etc)
-  const phoneNumber = normalizeJID(jid, sessionId);
-
-  const base = {
-    event: 'message.received',
-    session_id: sessionId,
-    from: jid,
-    phone_number: phoneNumber, // Actual phone number (normalized)
-    message_id: msg.key.id,
-    type,
-    timestamp: msg.messageTimestamp
-  };
-
-  if (type === 'text') {
-    base.text = msg.message?.conversation ||
-      msg.message?.extendedTextMessage?.text || '';
-  }
-
-  if (['image', 'video', 'document', 'audio'].includes(type)) {
-    const mediaMsg = msg.message?.[`${type}Message`];
-    base.mimetype = mediaMsg?.mimetype;
-    base.filename = mediaMsg?.fileName;
-    base.caption = mediaMsg?.caption;
-
-    // Download and save media, include URL in webhook
-    try {
-      const mediaInfo = await downloadAndSaveMedia(msg, sessionId);
-      base.media_url = mediaInfo.fileUrl;
-      base.media_path = mediaInfo.filePath;
-      base.media_size = mediaInfo.size;
-      log(`💾 Media saved: ${mediaInfo.fileUrl}`);
-    } catch (err) {
-      log(`❌ Failed to download media: ${err.message}`);
-    }
-  }
-
-  return base;
-}
-
-/**
- * Download media from message and save to file
- */
 async function downloadAndSaveMedia(msg, sessionId) {
   const session = getSession(sessionId);
   if (!session) {
@@ -905,8 +356,6 @@ async function downloadAndSaveMedia(msg, sessionId) {
 
   const ext = getExtension(mimetype);
   const filename = `${Date.now()}-${Math.random().toString(36).substring(7)}.${ext}`;
-
-  // Save to MEDIA_DIR (not AUTH_DIR) so it's accessible via static file serving
   const mediaDir = process.env.MEDIA_DIR || './media';
   const filePath = path.join(mediaDir, 'incoming', filename);
 
@@ -915,13 +364,7 @@ async function downloadAndSaveMedia(msg, sessionId) {
 
   const fileUrl = `${process.env.PUBLIC_URL || 'http://localhost:3021'}/media/files/incoming/${filename}`;
 
-  return {
-    filename,
-    filePath,
-    fileUrl,
-    mimetype,
-    size: buffer.length
-  };
+  return { filename, filePath, fileUrl, mimetype, size: buffer.length };
 }
 
 function getExtension(mimetype) {
@@ -943,17 +386,12 @@ function getExtension(mimetype) {
   return map[mimetype] || 'bin';
 }
 
-/**
- * Save incoming message to chat history with pre-resolved phone number
- */
-async function saveChatHistoryWithPhone(sessionId, jid, msg, msgType, phoneNumber, lid) {
+async function saveChatHistoryWithLID(sessionId, jid, msg, msgType, lid) {
   try {
-    // Extract message text or caption based on type
     let messageText = '';
 
     if (msgType === 'text') {
-      messageText = msg.message?.conversation ||
-                   msg.message?.extendedTextMessage?.text || '';
+      messageText = msg.message?.conversation || msg.message?.extendedTextMessage?.text || '';
     } else if (msgType === 'image') {
       const imageMsg = msg.message?.imageMessage;
       messageText = imageMsg?.caption || '[Image]';
@@ -971,15 +409,13 @@ async function saveChatHistoryWithPhone(sessionId, jid, msg, msgType, phoneNumbe
       messageText = `[${msgType}]`;
     }
 
-    log(`💾 Saving chat: from=${phoneNumber}, lid=${lid}, type=${msgType}, message=${messageText.substring(0, 50)}`);
+    log(`💾 Saving chat: lid=${lid}, type=${msgType}, message=${messageText.substring(0, 50)}`);
 
-    // Save to chat history
     await prisma.chatHistory.create({
       data: {
         sessionId,
         messageId: msg.key?.id,
-        from: phoneNumber,
-        lid,
+        from: lid,
         message: messageText,
         type: msgType,
         isFromMe: false,
@@ -987,25 +423,18 @@ async function saveChatHistoryWithPhone(sessionId, jid, msg, msgType, phoneNumbe
       }
     });
 
-    // Cleanup old history
     await prisma.chatHistory.deleteMany({
       where: {
         sessionId,
-        from: phoneNumber,
+        from: lid,
         createdAt: {
           lt: new Date(Date.now() - (30 * 24 * 60 * 60 * 1000))
         }
       }
     });
 
-    // Update chat list
     const existingChat = await prisma.chat.findUnique({
-      where: {
-        sessionId_jid: {
-          sessionId,
-          jid: phoneNumber
-        }
-      }
+      where: { sessionId_lid: { sessionId, lid } }
     });
 
     if (existingChat) {
@@ -1013,34 +442,29 @@ async function saveChatHistoryWithPhone(sessionId, jid, msg, msgType, phoneNumbe
         where: { id: existingChat.id },
         data: {
           unreadCount: { increment: 1 },
-          lastMessageTime: new Date(msg.messageTimestamp * 1000),
-          lid: lid || existingChat.lid
+          lastMessageTime: new Date(msg.messageTimestamp * 1000)
         }
       });
     } else {
       await prisma.chat.create({
         data: {
           sessionId,
-          jid: phoneNumber,
           lid,
-          name: phoneNumber,
+          name: lid,
           unreadCount: 1,
           lastMessageTime: new Date(msg.messageTimestamp * 1000)
         }
       });
     }
 
-    log(`💾 Chat history saved for ${phoneNumber} ${lid ? `(LID: ${lid})` : ''}`);
+    log(`💾 Chat history saved for LID ${lid}`);
   } catch (err) {
     log(`❌ Error saving chat history: ${err.message}`);
     console.error(err.stack);
   }
 }
 
-/**
- * Build webhook payload with pre-resolved phone number
- */
-async function buildWebhookPayloadWithPhone(msg, type, sessionId, phoneNumber) {
+async function buildWebhookPayload(msg, type, sessionId, lid) {
   const jid = msg.key.remoteJid;
   const isGroup = jid.includes('@g.us');
 
@@ -1048,14 +472,13 @@ async function buildWebhookPayloadWithPhone(msg, type, sessionId, phoneNumber) {
     event: 'message.received',
     session_id: sessionId,
     from: jid,
-    phone_number: phoneNumber,
+    lid,
     is_group: isGroup,
     message_id: msg.key.id,
     type,
     timestamp: msg.messageTimestamp
   };
 
-  // Handle text messages - check multiple possible locations
   if (type === 'text') {
     base.text = msg.message?.conversation ||
                 msg.message?.extendedTextMessage?.text ||
@@ -1064,18 +487,15 @@ async function buildWebhookPayloadWithPhone(msg, type, sessionId, phoneNumber) {
                 '';
   }
 
-  // Handle image messages with caption
   if (type === 'image' || type === 'image_viewonce') {
-    const imageMsg = msg.message?.imageMessage ||
-                    msg.message?.viewOnceMessage?.message?.imageMessage;
+    const imageMsg = msg.message?.imageMessage || msg.message?.viewOnceMessage?.message?.imageMessage;
     if (imageMsg) {
       base.mimetype = imageMsg.mimetype;
       base.filename = imageMsg.fileName || `image_${Date.now()}.jpg`;
-      base.caption = imageMsg.caption || ''; // Include caption
+      base.caption = imageMsg.caption || '';
       base.width = imageMsg.width;
       base.height = imageMsg.height;
 
-      // Download and save media, include URL in webhook
       try {
         const mediaInfo = await downloadAndSaveMedia(msg, sessionId);
         base.media_url = mediaInfo.fileUrl;
@@ -1089,14 +509,12 @@ async function buildWebhookPayloadWithPhone(msg, type, sessionId, phoneNumber) {
     }
   }
 
-  // Handle video messages with caption
   if (type === 'video' || type === 'video_viewonce') {
-    const videoMsg = msg.message?.videoMessage ||
-                    msg.message?.viewOnceMessage?.message?.videoMessage;
+    const videoMsg = msg.message?.videoMessage || msg.message?.viewOnceMessage?.message?.videoMessage;
     if (videoMsg) {
       base.mimetype = videoMsg.mimetype;
       base.filename = videoMsg.fileName || `video_${Date.now()}.mp4`;
-      base.caption = videoMsg.caption || ''; // Include caption
+      base.caption = videoMsg.caption || '';
       base.width = videoMsg.width;
       base.height = videoMsg.height;
       base.duration = videoMsg.seconds;
@@ -1113,7 +531,6 @@ async function buildWebhookPayloadWithPhone(msg, type, sessionId, phoneNumber) {
     }
   }
 
-  // Handle document messages
   if (type === 'document') {
     const docMsg = msg.message?.documentMessage;
     if (docMsg) {
@@ -1128,7 +545,55 @@ async function buildWebhookPayloadWithPhone(msg, type, sessionId, phoneNumber) {
         base.media_path = mediaInfo.filePath;
       } catch (err) {
         log(`❌ Failed to download media: ${err.message}`);
+        base.media_error = err.message;
       }
+    }
+  }
+
+  if (type === 'audio') {
+    const audioMsg = msg.message?.audioMessage;
+    if (audioMsg) {
+      base.mimetype = audioMsg.mimetype;
+      base.duration = audioMsg.seconds;
+      base.filename = `audio_${Date.now()}.ogg`;
+
+      try {
+        const mediaInfo = await downloadAndSaveMedia(msg, sessionId);
+        base.media_url = mediaInfo.fileUrl;
+        base.media_path = mediaInfo.filePath;
+        base.media_size = mediaInfo.size;
+      } catch (err) {
+        log(`❌ Failed to download media: ${err.message}`);
+        base.media_error = err.message;
+      }
+    }
+  }
+
+  if (type === 'sticker') {
+    const stickerMsg = msg.message?.stickerMessage;
+    if (stickerMsg) {
+      base.mimetype = stickerMsg.mimetype;
+      base.width = stickerMsg.width;
+      base.height = stickerMsg.height;
+      base.filename = `sticker_${Date.now()}.webp`;
+    }
+  }
+
+  if (type === 'reaction') {
+    const reactionMsg = msg.message?.reactionMessage;
+    if (reactionMsg) {
+      base.reaction = reactionMsg.text;
+      base.key = reactionMsg.key;
+    }
+  }
+
+  if (type === 'location') {
+    const locationMsg = msg.message?.locationMessage || msg.message?.liveLocationMessage;
+    if (locationMsg) {
+      base.latitude = locationMsg.latitudeDegrees;
+      base.longitude = locationMsg.longitudeDegrees;
+      base.name = locationMsg.name;
+      base.address = locationMsg.address;
     }
   }
 
@@ -1136,124 +601,73 @@ async function buildWebhookPayloadWithPhone(msg, type, sessionId, phoneNumber) {
 }
 
 /**
- * Get chat list for session
+ * Get chat list for a session from database
  */
 export async function getChatList(sessionId) {
-  try {
-    console.log('[getChatList] Querying chats for session:', sessionId);
+  const chats = await prisma.chat.findMany({
+    where: { sessionId },
+    orderBy: [{ lastMessageTime: 'desc' }]
+  });
 
-    const chats = await prisma.chat.findMany({
-      where: { sessionId },
-      orderBy: [{ lastMessageTime: 'desc' }]
-    });
-
-    console.log('[getChatList] Raw chats from DB:', chats.length);
-
-    // Get last message for each chat
-    const result = await Promise.all(chats.map(async (chat) => {
-      // Get last message from chat history
-      const lastMessage = await prisma.chatHistory.findFirst({
-        where: {
-          sessionId,
-          from: chat.jid
-        },
-        orderBy: [{ timestamp: 'desc' }]
-      });
-
-      return {
-        id: chat.jid,
-        name: chat.name || chat.jid.split('@')[0],
-        last_message: lastMessage ? {
-          text: lastMessage.message,
-          type: lastMessage.type,
-          is_from_me: lastMessage.isFromMe,
-          timestamp: lastMessage.timestamp.getTime()
-        } : null,
-        last_chat: lastMessage?.timestamp.getTime() || chat.lastMessageTime?.getTime() || 0,
-        unread_count: chat.unreadCount
-      };
-    }));
-
-    console.log('[getChatList] Returning:', result.length, 'chats');
-
-    return result;
-  } catch (err) {
-    console.error('[getChatList] Error:', err.message);
-    return [];
-  }
+  return chats.map(chat => ({
+    id: chat.id,
+    lid: chat.lid,
+    name: chat.name || chat.lid,
+    unread_count: chat.unreadCount,
+    last_chat: chat.lastMessageTime?.getTime() || null
+  }));
 }
 
 /**
- * Get message history for a specific chat
+ * Get chat history for a specific LID
  */
-export async function getChatHistory(sessionId, jid, limit = 20) {
-  try {
-    const messages = await prisma.chatHistory.findMany({
-      where: {
-        sessionId,
-        from: jid
-      },
-      orderBy: [{ timestamp: 'desc' }],
-      take: limit
-    });
+export async function getChatHistory(sessionId, lid, limit = 20) {
+  const messages = await prisma.chatHistory.findMany({
+    where: { sessionId, from: lid },
+    orderBy: [{ timestamp: 'desc' }],
+    take: parseInt(limit)
+  });
 
-    return messages.reverse().map(msg => ({
-      id: msg.id,
-      from: msg.from,
-      message: msg.type === 'image' || msg.type === 'video' ? (msg.message || '[Media]') : msg.message,
-      caption: msg.message, // For media messages, message field contains caption
-      type: msg.type,
-      is_from_me: msg.isFromMe,
-      timestamp: msg.timestamp.getTime()
-    }));
-  } catch (err) {
-    log(`❌ Error getting chat history: ${err.message}`);
-    return [];
-  }
+  return messages.map(msg => ({
+    id: msg.id,
+    from: msg.from,
+    lid: msg.from,
+    message: msg.message,
+    type: msg.type,
+    is_from_me: msg.isFromMe,
+    timestamp: msg.timestamp.getTime()
+  })).reverse();
 }
 
 /**
- * Get messages by phone number (across all sessions)
+ * Get messages by LID across all sessions
  */
-export async function getMessagesByPhoneNumber(phoneNumber, sessionId = null, limit = 50) {
-  try {
-    // Normalize phone number - remove +, -, spaces
-    const normalized = phoneNumber.replace(/[^0-9]/g, '');
+export async function getMessagesByLID(lid, sessionId = null, limit = 50) {
+  const where = { from: lid };
+  if (sessionId) {
+    where.sessionId = sessionId;
+  }
 
-    // Build search pattern for JID (phone number with @s.whatsapp.net)
-    const jidPattern = `%${normalized}%`;
-
-    const where = {
-      from: { contains: normalized },
-      ...(sessionId ? { sessionId } : {})
-    };
-
-    const messages = await prisma.chatHistory.findMany({
-      where,
-      orderBy: [{ timestamp: 'desc' }],
-      take: limit,
-      include: {
-        session: {
-          select: {
-            id: true,
-            name: true
-          }
-        }
+  const messages = await prisma.chatHistory.findMany({
+    where,
+    orderBy: [{ timestamp: 'desc' }],
+    take: parseInt(limit),
+    include: {
+      session: {
+        select: { id: true, name: true }
       }
-    });
+    }
+  });
 
-    return messages.reverse().map(msg => ({
-      id: msg.id,
-      session_id: msg.sessionId,
-      session_name: msg.session?.name,
-      from: msg.from,
-      message: msg.message,
-      type: msg.type,
-      is_from_me: msg.isFromMe,
-      timestamp: msg.timestamp.getTime()
-    }));
-  } catch (err) {
-    log(`❌ Error getting messages by phone number: ${err.message}`);
-    return [];
-  }
+  return messages.map(msg => ({
+    id: msg.id,
+    session_id: msg.sessionId,
+    session_name: msg.session?.name,
+    from: msg.from,
+    lid: msg.from,
+    message: msg.message,
+    type: msg.type,
+    is_from_me: msg.isFromMe,
+    timestamp: msg.timestamp.getTime()
+  }));
 }

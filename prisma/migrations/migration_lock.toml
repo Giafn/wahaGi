@@ -1,0 +1,8 @@
+# Migration history
+0001_init
+
+# Prisma version
+prisma_version = "5.22.0"
+
+# Provider
+provider = "postgresql"
