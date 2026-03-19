@@ -17,6 +17,12 @@ async function readAllMessages(sessionId, jid) {
     return;
   }
 
+  // Check if socket is available
+  if (!session.socket) {
+    console.log('[readAllMessages] Socket not available, skipping read');
+    return;
+  }
+
   try {
     // Normalize JID to phone number
     const phoneNumber = jid.replace('@s.whatsapp.net', '');
@@ -53,6 +59,8 @@ async function readAllMessages(sessionId, jid) {
       return;
     }
 
+    console.log(`[readAllMessages] Attempting to mark ${messageKeys.length} messages as read...`);
+
     // Send read receipt using chatModify (more stable)
     try {
       await session.socket.chatModify(
@@ -62,21 +70,32 @@ async function readAllMessages(sessionId, jid) {
       console.log(`[readAllMessages] ✅ Marked ${messageKeys.length} messages as read for ${phoneNumber}`);
     } catch (readErr) {
       // Fallback to readMessages if chatModify fails
-      console.log('[readAllMessages] chatModify failed, trying readMessages:', readErr.message);
-      await session.socket.readMessages(messageKeys);
-      console.log(`[readAllMessages] ✅ Marked ${messageKeys.length} messages as read (fallback) for ${phoneNumber}`);
+      console.log('[readAllMessages] chatModify failed:', readErr.message);
+      console.log('[readAllMessages] Trying readMessages fallback...');
+      try {
+        await session.socket.readMessages(messageKeys);
+        console.log(`[readAllMessages] ✅ Marked ${messageKeys.length} messages as read (fallback) for ${phoneNumber}`);
+      } catch (readErr2) {
+        console.error('[readAllMessages] readMessages also failed:', readErr2.message);
+        // Don't throw - continue anyway
+      }
     }
 
     // Update unread count in database
-    await prisma.chat.updateMany({
-      where: {
-        sessionId,
-        jid: phoneNumber
-      },
-      data: {
-        unreadCount: 0
-      }
-    });
+    try {
+      await prisma.chat.updateMany({
+        where: {
+          sessionId,
+          jid: phoneNumber
+        },
+        data: {
+          unreadCount: 0
+        }
+      });
+      console.log('[readAllMessages] Updated database unread count');
+    } catch (dbErr) {
+      console.error('[readAllMessages] DB update failed:', dbErr.message);
+    }
   } catch (err) {
     // Non-blocking: don't crash the app, just log error
     console.error('[readAllMessages] Non-critical error (continuing):', err.message);
@@ -98,6 +117,8 @@ export async function sendText(sessionId, to, text, reply_to = null) {
   // Read all unread messages before sending (non-blocking)
   try {
     await readAllMessages(sessionId, jid);
+    // Small delay to avoid race condition with read receipt
+    await sleep(100);
   } catch (err) {
     console.log('[sendText] readAllMessages error (continuing):', err.message);
   }
@@ -231,6 +252,8 @@ export async function sendMedia(sessionId, to, buffer, mimetype, filename, capti
   // Read all unread messages before sending (non-blocking)
   try {
     await readAllMessages(sessionId, jid);
+    // Small delay to avoid race condition with read receipt
+    await sleep(100);
   } catch (err) {
     console.log('[sendMedia] readAllMessages error (continuing):', err.message);
   }

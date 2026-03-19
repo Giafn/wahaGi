@@ -135,4 +135,16 @@ process.on('SIGTERM', async () => {
   process.exit(0);
 });
 
+// Global error handlers to prevent crashes
+process.on('uncaughtException', (err) => {
+  console.error('[FATAL] Uncaught Exception:', err.message);
+  console.error('[FATAL] Stack:', err.stack);
+  // Don't exit - let the app continue running
+});
+
+process.on('unhandledRejection', (reason, promise) => {
+  console.error('[FATAL] Unhandled Rejection at:', promise, 'reason:', reason);
+  // Don't exit - let the app continue running
+});
+
 start();
