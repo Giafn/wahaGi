@@ -272,10 +272,25 @@ export async function sendMedia(sessionId, to, buffer, mimetype, filename, capti
   console.log('[sendMedia] About to call sendMessage...');
   console.log('[sendMedia] Socket exists:', !!session.socket);
   console.log('[sendMedia] Socket sendMessage exists:', typeof session.socket?.sendMessage);
+  console.log('[sendMedia] Buffer size:', buffer?.length, 'bytes');
+  console.log('[sendMedia] Mimetype:', mimetype);
+  console.log('[sendMedia] Filename:', filename);
 
   try {
     console.log('[sendMedia] Calling session.socket.sendMessage...');
-    const result = await session.socket.sendMessage(jid, message);
+
+    // Wrap sendMessage in try-catch with setImmediate to catch async errors
+    const result = await new Promise((resolve, reject) => {
+      try {
+        session.socket.sendMessage(jid, message)
+          .then(resolve)
+          .catch(reject);
+      } catch (syncErr) {
+        console.error('[sendMedia] Synchronous error:', syncErr.message);
+        reject(syncErr);
+      }
+    });
+
     console.log('[sendMedia] sendMessage completed, result:', result?.key?.id);
 
     // Save outgoing message to chat history

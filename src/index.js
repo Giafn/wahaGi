@@ -137,14 +137,34 @@ process.on('SIGTERM', async () => {
 
 // Global error handlers to prevent crashes
 process.on('uncaughtException', (err) => {
-  console.error('[FATAL] Uncaught Exception:', err.message);
-  console.error('[FATAL] Stack:', err.stack);
+  console.error('');
+  console.error('========================================');
+  console.error('[FATAL] Uncaught Exception:');
+  console.error('  Message:', err.message);
+  console.error('  Type:', err.constructor.name);
+  console.error('  Stack:', err.stack);
+  console.error('========================================');
+  console.error('');
   // Don't exit - let the app continue running
 });
 
 process.on('unhandledRejection', (reason, promise) => {
-  console.error('[FATAL] Unhandled Rejection at:', promise, 'reason:', reason);
+  console.error('');
+  console.error('========================================');
+  console.error('[FATAL] Unhandled Rejection:');
+  console.error('  Reason:', reason);
+  console.error('  Promise:', promise);
+  console.error('========================================');
+  console.error('');
   // Don't exit - let the app continue running
+});
+
+// Also handle process warnings
+process.on('warning', (warning) => {
+  console.warn('[WARNING]', warning.name, ':', warning.message);
+  if (warning.stack) {
+    console.warn('[WARNING] Stack:', warning.stack);
+  }
 });
 
 start();
