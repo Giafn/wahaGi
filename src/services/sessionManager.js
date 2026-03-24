@@ -468,11 +468,11 @@ async function buildWebhookPayload(msg, type, sessionId, lid) {
   const jid = msg.key.remoteJid;
   const isGroup = jid.includes('@g.us');
 
-  // Untuk grup, ambil LID pengirim dari participant
-  // Untuk private chat, gunakan lid parameter
+  // Untuk grup, ambil LID pengirim dari participant (tanpa normalisasi)
+  // Untuk private chat, gunakan jid (tanpa normalisasi)
   const senderLid = isGroup
-    ? normalizeJID(msg.key.participant)
-    : lid;
+    ? msg.key.participant
+    : jid;
 
   const base = {
     event: 'message.received',
