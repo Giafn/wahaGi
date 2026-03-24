@@ -6,3 +6,5 @@ media/
 dist/
 frontend-react/node_modules/
 frontend-react/dist/
+.qwen/
+.github/
