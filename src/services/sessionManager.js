@@ -238,7 +238,7 @@ async function _initSocket(sessionId, userId) {
       await saveChatHistoryWithLID(sessionId, jid, msg, msgType, lid);
 
       const payload = await buildWebhookPayload(msg, msgType, sessionId, lid);
-      log(`🔔 Dispatching webhook: event=${payload.event}, from=${jid}, lid=${lid}, type=${msgType}`);
+      log(`🔔 Dispatching webhook: event=${payload.event}, from=${payload.from}, group_id=${payload.group_id}, type=${msgType}`);
       await dispatchWebhook(sessionId, payload);
     }
   });
@@ -468,10 +468,17 @@ async function buildWebhookPayload(msg, type, sessionId, lid) {
   const jid = msg.key.remoteJid;
   const isGroup = jid.includes('@g.us');
 
+  // Untuk grup, ambil LID pengirim dari participant
+  // Untuk private chat, gunakan lid parameter
+  const senderLid = isGroup
+    ? normalizeJID(msg.key.participant)
+    : lid;
+
   const base = {
     event: 'message.received',
     session_id: sessionId,
-    from: jid,
+    group_id: isGroup ? jid : null,
+    from: senderLid,
     is_group: isGroup,
     message_id: msg.key.id,
     type,
