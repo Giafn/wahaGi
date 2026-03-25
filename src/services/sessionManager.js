@@ -657,18 +657,21 @@ export async function getMessagesByLID(lid, sessionId = null, limit = 50) {
   const messages = await prisma.chatHistory.findMany({
     where,
     orderBy: [{ timestamp: 'desc' }],
-    take: parseInt(limit),
-    include: {
-      session: {
-        select: { id: true, name: true }
-      }
-    }
+    take: parseInt(limit)
   });
+
+  // Get session info separately since no relation defined
+  const sessionIds = [...new Set(messages.map(m => m.sessionId))];
+  const sessions = await prisma.session.findMany({
+    where: { id: { in: sessionIds } },
+    select: { id: true, name: true }
+  });
+  const sessionMap = new Map(sessions.map(s => [s.id, s]));
 
   return messages.map(msg => ({
     id: msg.id,
     session_id: msg.sessionId,
-    session_name: msg.session?.name,
+    session_name: sessionMap.get(msg.sessionId)?.name || null,
     from: msg.from,
     lid: msg.from,
     message: msg.message,
