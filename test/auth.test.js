@@ -8,11 +8,12 @@ import bcrypt from 'bcryptjs';
 describe('Auth API', () => {
   let app;
   let testUserId;
+  let authToken;
 
   before(async () => {
     // Create test app
     app = fastify({ logger: false });
-    
+
     await app.register(import('@fastify/cors'), { origin: true });
     await app.register(import('@fastify/jwt'), {
       secret: 'test-jwt-secret-for-unit-tests'
@@ -32,8 +33,17 @@ describe('Auth API', () => {
     await app.register(authRoutes, { prefix: '/auth' });
     await app.ready();
 
-    // Clean up test users
+    // Clean up and create test user manually (since /register is disabled)
     await prisma.user.deleteMany({ where: { username: { in: ['testuser', 'testuser2'] } } });
+    
+    // Create test user manually
+    const testUser = await prisma.user.create({
+      data: {
+        username: 'testuser',
+        passwordHash: await bcrypt.hash('password123', 12)
+      }
+    });
+    testUserId = testUser.id;
   });
 
   after(async () => {
@@ -43,7 +53,10 @@ describe('Auth API', () => {
   });
 
   describe('POST /auth/register', () => {
-    it('should register a new user successfully', async () => {
+    // NOTE: /auth/register is disabled in production for security
+    // These tests are skipped as the endpoint is intentionally disabled
+    // To enable self-registration, uncomment the route in src/routes/auth.js
+    it.skip('should register a new user successfully', async () => {
       const response = await app.inject({
         method: 'POST',
         url: '/auth/register',
@@ -62,7 +75,7 @@ describe('Auth API', () => {
       testUserId = body.user.id;
     });
 
-    it('should return 400 if username is missing', async () => {
+    it.skip('should return 400 if username is missing', async () => {
       const response = await app.inject({
         method: 'POST',
         url: '/auth/register',
@@ -74,7 +87,7 @@ describe('Auth API', () => {
       assert.strictEqual(response.statusCode, 400);
     });
 
-    it('should return 400 if password is missing', async () => {
+    it.skip('should return 400 if password is missing', async () => {
       const response = await app.inject({
         method: 'POST',
         url: '/auth/register',
@@ -86,7 +99,7 @@ describe('Auth API', () => {
       assert.strictEqual(response.statusCode, 400);
     });
 
-    it('should return 409 if username already exists', async () => {
+    it.skip('should return 409 if username already exists', async () => {
       const response = await app.inject({
         method: 'POST',
         url: '/auth/register',
@@ -118,6 +131,7 @@ describe('Auth API', () => {
       assert.ok(body.token);
       assert.ok(body.user);
       assert.strictEqual(body.user.username, 'testuser');
+      authToken = body.token; // Store for /me tests
     });
 
     it('should return 401 for invalid username', async () => {
@@ -177,22 +191,6 @@ describe('Auth API', () => {
   });
 
   describe('GET /auth/me', () => {
-    let authToken;
-
-    before(async () => {
-      // Get token for authenticated requests
-      const loginResponse = await app.inject({
-        method: 'POST',
-        url: '/auth/login',
-        payload: {
-          username: 'testuser',
-          password: 'password123'
-        }
-      });
-      const body = JSON.parse(loginResponse.body);
-      authToken = body.token;
-    });
-
     it('should return current user info with valid token', async () => {
       const response = await app.inject({
         method: 'GET',
