@@ -117,14 +117,41 @@ export async function createTestMedia(userId, filename = 'test.jpg', mimeType = 
 }
 
 // Cleanup helper for test data
-export async function cleanupTestData({ userId } = {}) {
+export async function cleanupTestData(options = {}) {
+  const { userId, sessionIds, chatIds } = options;
+
+  if (chatIds && chatIds.length > 0) {
+    await prisma.chat.deleteMany({ where: { id: { in: chatIds } } });
+  }
+
+  if (sessionIds && sessionIds.length > 0) {
+    await prisma.chatHistory.deleteMany({ where: { sessionId: { in: sessionIds } } });
+    await prisma.chat.deleteMany({ where: { sessionId: { in: sessionIds } } });
+    await prisma.media.deleteMany({ where: { userId: { in: sessionIds.map(() => userId) } } });
+    await prisma.session.deleteMany({ where: { id: { in: sessionIds } } });
+  }
+
   if (userId) {
-    await prisma.chatHistory.deleteMany({ where: { sessionId: { in: [] } } });
-    await prisma.chat.deleteMany({ where: { sessionId: { in: [] } } });
     await prisma.media.deleteMany({ where: { userId } });
     await prisma.session.deleteMany({ where: { userId } });
     await prisma.user.delete({ where: { id: userId } });
   }
+}
+
+// Simple cleanup for single user test data
+export async function cleanupUserTest(user, sessions = []) {
+  if (!user) return;
+
+  const sessionIds = sessions.filter(Boolean).map(s => s.id);
+
+  if (sessionIds.length > 0) {
+    await prisma.chatHistory.deleteMany({ where: { sessionId: { in: sessionIds } } });
+    await prisma.chat.deleteMany({ where: { sessionId: { in: sessionIds } } });
+    await prisma.media.deleteMany({ where: { userId: user.id } });
+    await prisma.session.deleteMany({ where: { id: { in: sessionIds } } });
+  }
+
+  await prisma.user.delete({ where: { id: user.id } });
 }
 
 // Multi-user setup for ownership testing

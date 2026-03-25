@@ -3,6 +3,7 @@ import assert from 'node:assert';
 import fastify from 'fastify';
 import { prisma } from '../src/db/client.js';
 import { messageRoutes } from '../src/routes/messages.js';
+import { cleanupUserTest } from './helpers.js';
 
 describe('Messages API', () => {
   let app;
@@ -55,10 +56,8 @@ describe('Messages API', () => {
   });
 
   after(async () => {
-    // Cleanup
-    await prisma.session.deleteMany({ where: { userId: testUser.id } });
-    await prisma.media.deleteMany({ where: { userId: testUser.id } });
-    await prisma.user.delete({ where: { id: testUser.id } });
+    // Cleanup using helper
+    await cleanupUserTest(testUser, [testSession]);
     await app.close();
   });
 

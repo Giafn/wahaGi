@@ -3,10 +3,22 @@ import assert from 'node:assert';
 import fastify from 'fastify';
 import bcrypt from 'bcryptjs';
 import { prisma } from '../src/db/client.js';
+import { cleanupUserTest } from './helpers.js';
 
-// Mock session manager for testing
+/**
+ * NOTE: This test file uses a mock session manager instead of the actual
+ * src/services/sessionManager.js. This is intentional for unit testing
+ * without requiring actual WhatsApp connections.
+ *
+ * The mockSessions Map simulates session state (status, qr) for testing
+ * session-dependent endpoints like profile-picture, status, restart.
+ *
+ * TODO: Consider adding integration tests that use the real session manager
+ * to catch changes in actual session management logic.
+ */
 const mockSessions = new Map();
 
+// Test session routes with mock session manager
 async function testSessionRoutes(fastify) {
   fastify.addHook('preHandler', fastify.authenticate);
 
@@ -260,9 +272,9 @@ describe('Sessions API', () => {
   });
 
   after(async () => {
-    // Cleanup
-    await prisma.session.deleteMany({ where: { userId: testUser.id } });
-    await prisma.user.delete({ where: { id: testUser.id } });
+    // Cleanup using helper
+    mockSessions.clear();
+    await cleanupUserTest(testUser, [testSessionId].filter(Boolean));
     await app.close();
   });
 

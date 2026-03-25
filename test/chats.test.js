@@ -3,6 +3,7 @@ import assert from 'node:assert';
 import fastify from 'fastify';
 import { prisma } from '../src/db/client.js';
 import { chatRoutes } from '../src/routes/chats.js';
+import { cleanupUserTest } from './helpers.js';
 
 describe('Chats API', () => {
   let app;
@@ -94,11 +95,8 @@ describe('Chats API', () => {
   });
 
   after(async () => {
-    // Cleanup
-    await prisma.chatHistory.deleteMany({ where: { sessionId: testSession.id } });
-    await prisma.chat.deleteMany({ where: { sessionId: testSession.id } });
-    await prisma.session.deleteMany({ where: { userId: testUser.id } });
-    await prisma.user.delete({ where: { id: testUser.id } });
+    // Cleanup using helper
+    await cleanupUserTest(testUser, [testSession]);
     await app.close();
   });
 

@@ -3,102 +3,8 @@ import assert from 'node:assert';
 import fastify from 'fastify';
 import bcrypt from 'bcryptjs';
 import { prisma } from '../src/db/client.js';
-
-// Test contacts routes
-async function testContactsRoutes(fastify) {
-  fastify.addHook('preHandler', fastify.authenticate);
-
-  // GET /contacts - List all contacts
-  fastify.get('/', async (request) => {
-    const contacts = await prisma.chat.findMany({
-      where: { sessionId: request.user.id },
-      orderBy: [{ lastMessageTime: 'desc' }]
-    });
-
-    return contacts.map(c => ({
-      id: c.id,
-      lid: c.lid,
-      name: c.name,
-      unread_count: c.unreadCount,
-      last_message_time: c.lastMessageTime?.getTime() || null
-    }));
-  });
-
-  // GET /contacts/:id - Get single contact by database ID
-  fastify.get('/:id', async (request, reply) => {
-    const { id } = request.params;
-
-    const contact = await prisma.chat.findUnique({
-      where: { id }
-    });
-
-    if (!contact) {
-      return reply.code(404).send({ error: 'Contact not found' });
-    }
-
-    return {
-      id: contact.id,
-      lid: contact.lid,
-      name: contact.name,
-      unread_count: contact.unreadCount,
-      last_message_time: contact.lastMessageTime?.getTime() || null
-    };
-  });
-
-  // PUT /contacts/:id/name - Update name for a contact
-  fastify.put('/:id/name', async (request, reply) => {
-    const { id } = request.params;
-    const { name } = request.body;
-
-    if (!name || name.trim().length === 0) {
-      return reply.code(400).send({
-        success: false,
-        message: 'Name is required'
-      });
-    }
-
-    try {
-      await prisma.chat.update({
-        where: { id },
-        data: {
-          name: name.trim()
-        }
-      });
-
-      return {
-        success: true,
-        message: `Updated name for contact ${id}`
-      };
-    } catch (err) {
-      return reply.code(500).send({
-        success: false,
-        message: err.message
-      });
-    }
-  });
-
-  // DELETE /contacts/:id - Delete a contact
-  fastify.delete('/:id', async (request, reply) => {
-    const { id } = request.params;
-
-    const contact = await prisma.chat.findUnique({
-      where: { id }
-    });
-
-    if (!contact) {
-      return reply.code(404).send({ error: 'Contact not found' });
-    }
-
-    await prisma.chat.delete({
-      where: { id }
-    });
-
-    return {
-      success: true,
-      message: `Deleted contact ${id}`
-    };
-  });
-}
+import { contactRoutes } from '../src/routes/contacts.js';
+import { cleanupUserTest } from './helpers.js';
 
 describe('Contacts API', () => {
   let app;
@@ -155,7 +61,8 @@ describe('Contacts API', () => {
       }
     });
 
-    await app.register(testContactsRoutes, { prefix: '/contacts' });
+    // Use actual contactRoutes from source
+    await app.register(contactRoutes, { prefix: '/contacts' });
     await app.ready();
 
     // Generate auth token
@@ -163,10 +70,8 @@ describe('Contacts API', () => {
   });
 
   after(async () => {
-    // Cleanup
-    await prisma.chat.deleteMany({ where: { sessionId: testSession.id } });
-    await prisma.session.deleteMany({ where: { userId: testUser.id } });
-    await prisma.user.delete({ where: { id: testUser.id } });
+    // Cleanup using helper
+    await cleanupUserTest(testUser, [testSession]);
     await app.close();
   });
 
@@ -409,7 +314,7 @@ describe('Contacts API', () => {
       assert.strictEqual(response.statusCode, 400);
     });
 
-    it('should return 404 for non-existent contact', async () => {
+    it('should return 500 for non-existent contact', async () => {
       const response = await app.inject({
         method: 'PUT',
         url: '/contacts/00000000-0000-0000-0000-000000000000/name',
