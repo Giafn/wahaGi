@@ -25,8 +25,16 @@ export async function contactRoutes(fastify) {
       }
     }
   }, async (request) => {
+    // Get all sessions for the user first
+    const sessions = await prisma.session.findMany({
+      where: { userId: request.user.id },
+      select: { id: true }
+    });
+
+    const sessionIds = sessions.map(s => s.id);
+
     const contacts = await prisma.chat.findMany({
-      where: { sessionId: request.user.id },
+      where: { sessionId: { in: sessionIds } },
       orderBy: [{ lastMessageTime: 'desc' }]
     });
 
