@@ -274,7 +274,9 @@ describe('Sessions API', () => {
   after(async () => {
     // Cleanup using helper
     mockSessions.clear();
-    await cleanupUserTest(testUser, [testSessionId].filter(Boolean));
+    // Clean up all sessions for test user
+    await prisma.session.deleteMany({ where: { userId: testUser.id } });
+    await prisma.user.delete({ where: { id: testUser.id } });
     await app.close();
   });
 
