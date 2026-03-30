@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Plus, Trash2, Settings, QrCode, RefreshCw, Wifi, WifiOff, Copy } from 'lucide-react';
+import { Plus, Trash2, Settings, QrCode, RefreshCw, Wifi, WifiOff, Copy, LogOut } from 'lucide-react';
 import toast from 'react-hot-toast';
 import Layout from '../components/Layout';
 import StatusBadge from '../components/StatusBadge';
@@ -77,6 +77,17 @@ export default function Dashboard() {
     try {
       await api.restartSession(id);
       toast.success('Restarting...');
+      await load();
+    } catch (err) {
+      toast.error(err.message);
+    }
+  };
+
+  const handleDisconnect = async (id, name) => {
+    if (!confirm(`Disconnect device "${name}"? You will need to scan QR code again to reconnect.`)) return;
+    try {
+      await api.disconnectSession(id);
+      toast.success('Device disconnected');
       await load();
     } catch (err) {
       toast.error(err.message);
@@ -223,6 +234,14 @@ export default function Dashboard() {
                   >
                     <RefreshCw size={12} /> Restart
                   </button>
+                  {session.status === 'connected' && (
+                    <button
+                      onClick={() => handleDisconnect(session.id, session.name)}
+                      className="flex items-center gap-1.5 px-3 py-1.5 border border-amber/30 text-amber hover:bg-amber/10 font-mono text-xs transition-colors"
+                    >
+                      <LogOut size={12} /> Disconnect
+                    </button>
+                  )}
                   <button
                     onClick={() => navigate(`/device/${session.id}`)}
                     className="flex items-center gap-1.5 px-3 py-1.5 border border-border text-muted hover:text-white hover:border-subtle font-mono text-xs transition-colors ml-auto"

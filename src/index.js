@@ -28,6 +28,18 @@ const app = Fastify({
       target: 'pino-pretty',
       options: { colorize: true }
     }
+  },
+  bodyLimit: 10485760
+});
+
+// Allow empty JSON body
+app.addContentTypeParser('application/json', { parseAs: 'string' }, function (req, body, done) {
+  try {
+    const json = body ? JSON.parse(body) : {};
+    done(null, json);
+  } catch (err) {
+    err.statusCode = 400;
+    done(err, undefined);
   }
 });
 

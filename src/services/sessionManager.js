@@ -83,6 +83,24 @@ export async function deleteSession(sessionId) {
   } catch {}
 }
 
+export async function disconnectSession(sessionId) {
+  const entry = registry.get(sessionId);
+  if (entry) {
+    try {
+      await entry.socket.logout();
+    } catch {}
+    try {
+      entry.socket.end(undefined);
+    } catch {}
+    registry.delete(sessionId);
+  }
+  // Update session status in database
+  await prisma.session.update({
+    where: { id: sessionId },
+    data: { status: 'disconnected' }
+  }).catch(() => {});
+}
+
 export async function restoreAllSessions() {
   try {
     const sessions = await prisma.session.findMany({

@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { ArrowLeft, Save, QrCode, Globe, RefreshCw, Trash2, Copy } from 'lucide-react';
+import { ArrowLeft, Save, QrCode, Globe, RefreshCw, Trash2, Copy, LogOut } from 'lucide-react';
 import toast from 'react-hot-toast';
 import Layout from '../components/Layout';
 import StatusBadge from '../components/StatusBadge';
@@ -83,6 +83,17 @@ export default function DeviceDetail() {
     }
   };
 
+  const handleDisconnect = async () => {
+    if (!confirm('Disconnect this device? You will need to scan QR code again to reconnect.')) return;
+    try {
+      await api.disconnectSession(id);
+      toast.success('Device disconnected');
+      setTimeout(load, 1000);
+    } catch (err) {
+      toast.error(err.message);
+    }
+  };
+
   const handleDelete = async () => {
     if (!confirm('Delete this device? This cannot be undone.')) return;
     try {
@@ -141,6 +152,14 @@ export default function DeviceDetail() {
           <button onClick={handleRestart} className="flex items-center gap-2 border border-border font-mono text-xs text-muted px-3 py-2 hover:text-white transition-colors">
             <RefreshCw size={12} /> Restart
           </button>
+          {session?.status === 'connected' && (
+            <button
+              onClick={handleDisconnect}
+              className="flex items-center gap-2 border border-amber/30 text-amber font-mono text-xs px-3 py-2 hover:bg-amber/10 transition-colors"
+            >
+              <LogOut size={12} /> Disconnect
+            </button>
+          )}
           <button onClick={handleDelete} className="flex items-center gap-2 border border-border font-mono text-xs text-muted px-3 py-2 hover:text-red hover:border-red/30 transition-colors">
             <Trash2 size={12} />
           </button>
