@@ -256,20 +256,15 @@ async function _initSocket(sessionId, userId) {
       }
       processedMessages.set(processKey, Date.now());
 
-      if (isFromMe) {
-        log(`⏭️ Skipping outgoing message (already saved)`);
-        continue;
-      }
-
       const lid = normalizeJID(jid);
       const isGroup = jid.includes('@g.us');
 
-      log(`🔍 Processing incoming: jid=${jid}, lid=${lid}, isGroup=${isGroup}`);
+      log(`🔍 Processing message: jid=${jid}, lid=${lid}, isGroup=${isGroup}, isFromMe=${isFromMe}`);
 
       await saveChatHistoryWithLID(sessionId, jid, msg, msgType, lid);
 
-      const payload = await buildWebhookPayload(msg, msgType, sessionId, lid);
-      log(`🔔 Dispatching webhook: event=${payload.event}, from=${payload.from}, group_id=${payload.group_id}, type=${msgType}`);
+      const payload = await buildWebhookPayload(msg, msgType, sessionId, lid, isFromMe);
+      log(`🔔 Dispatching webhook: event=${payload.event}, from=${payload.from}, from_me=${payload.from_me}, group_id=${payload.group_id}, type=${msgType}`);
       await dispatchWebhook(sessionId, payload);
     }
   });
@@ -495,21 +490,20 @@ async function saveChatHistoryWithLID(sessionId, jid, msg, msgType, lid) {
   }
 }
 
-async function buildWebhookPayload(msg, type, sessionId, lid) {
+async function buildWebhookPayload(msg, type, sessionId, lid, isFromMe = false) {
   const jid = msg.key.remoteJid;
   const isGroup = jid.includes('@g.us');
 
-  // Untuk grup, ambil LID pengirim dari participant (tanpa normalisasi)
-  // Untuk private chat, gunakan jid (tanpa normalisasi)
   const senderLid = isGroup
     ? msg.key.participant
     : jid;
 
   const base = {
-    event: 'message.received',
+    event: isFromMe ? 'message.sent' : 'message.received',
     session_id: sessionId,
     group_id: isGroup ? jid : null,
     from: senderLid,
+    from_me: isFromMe,
     is_group: isGroup,
     message_id: msg.key.id,
     type,
