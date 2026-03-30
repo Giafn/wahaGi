@@ -83,6 +83,24 @@ export async function deleteSession(sessionId) {
   } catch {}
 }
 
+export async function disconnectSession(sessionId) {
+  const entry = registry.get(sessionId);
+  if (entry) {
+    try {
+      await entry.socket.logout();
+    } catch {}
+    try {
+      entry.socket.end(undefined);
+    } catch {}
+    registry.delete(sessionId);
+  }
+  // Update session status in database
+  await prisma.session.update({
+    where: { id: sessionId },
+    data: { status: 'disconnected' }
+  }).catch(() => {});
+}
+
 export async function restoreAllSessions() {
   try {
     const sessions = await prisma.session.findMany({
@@ -135,7 +153,9 @@ async function _initSocket(sessionId, userId) {
       keys: makeCacheableSignalKeyStore(state.keys, logger)
     },
     browser: ['Baileys API', 'Chrome', '120.0.0'],
-    generateHighQualityLinkPreview: false
+    generateHighQualityLinkPreview: false,
+    markOnlineOnConnect: false,
+    syncFullAppState: false
   });
 
   entry.socket = socket;
@@ -184,6 +204,17 @@ async function _initSocket(sessionId, userId) {
       entry.status = 'connected';
       entry.qr = null;
       entry.retryCount = 0;
+
+      // Set presence to unavailable once after connect to hide online status
+      // This won't affect message delivery as we don't toggle it repeatedly
+      setTimeout(async () => {
+        try {
+          await socket.sendPresenceUpdate('unavailable');
+          log(`🔒 Presence set to unavailable (hidden online status)`);
+        } catch (err) {
+          log(`⚠️ Failed to set presence: ${err.message}`);
+        }
+      }, 3000);
 
       await prisma.session.update({
         where: { id: sessionId },

@@ -49,7 +49,8 @@ export const api = {
   deleteSession: (id) => request('DELETE', `/sessions/${id}`),
   getQR: (id) => request('GET', `/sessions/${id}/qr`),
   setWebhook: (id, url) => request('POST', `/sessions/${id}/webhook`, { url }),
-  restartSession: (id) => request('POST', `/sessions/${id}/restart`, {}),
+  restartSession: (id) => request('POST', `/sessions/${id}/restart`),
+  disconnectSession: (id) => request('POST', `/sessions/${id}/disconnect`),
   setStatus: (id, text) => request('POST', `/sessions/${id}/status`, { text }),
 
   // Messages

@@ -7,8 +7,17 @@ import { prisma } from '../db/client.js';
 
 const MEDIA_DIR = process.env.MEDIA_DIR || './media';
 
+// Helper logging - only when DEBUG=true
+const log = (msg, ...args) => {
+  if (process.env.DEBUG === 'true') {
+    console.log(`[Presence] ${msg}`, ...args);
+  }
+};
+
 /**
  * Send text message using LID
+ * Note: We don't toggle presence here - let WhatsApp handle it naturally
+ * markOnlineOnConnect is disabled in sessionManager.js
  */
 export async function sendText(sessionId, lid, text, reply_to = null) {
   const session = getSession(sessionId);

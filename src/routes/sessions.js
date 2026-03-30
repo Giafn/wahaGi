@@ -1,5 +1,5 @@
 import { prisma } from '../db/client.js';
-import { createSession, deleteSession, getSession } from '../services/sessionManager.js';
+import { createSession, deleteSession, getSession, disconnectSession } from '../services/sessionManager.js';
 import QRCode from 'qrcode';
 
 export async function sessionRoutes(fastify) {
@@ -421,6 +421,40 @@ export async function sessionRoutes(fastify) {
     }
 
     return { status: result.status, qr: qrBase64 };
+  });
+
+  // POST /sessions/:id/disconnect
+  fastify.post('/:id/disconnect', {
+    schema: {
+      tags: ['Sessions'],
+      security: [{ bearerAuth: [] }],
+      params: {
+        type: 'object',
+        required: ['id'],
+        properties: {
+          id: { type: 'string', format: 'uuid' }
+        }
+      },
+      response: {
+        200: {
+          type: 'object',
+          properties: {
+            message: { type: 'string' },
+            status: { type: 'string' }
+          }
+        }
+      }
+    }
+  }, async (request, reply) => {
+    const session = await prisma.session.findFirst({
+      where: { id: request.params.id, userId: request.user.id }
+    });
+
+    if (!session) return reply.code(404).send({ error: 'Session not found' });
+
+    await disconnectSession(session.id);
+
+    return { message: 'Session disconnected', status: 'disconnected' };
   });
 
   // GET /sessions/:id/status - Check session status (for webhook alternative)
