@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Plus, Trash2, Settings, QrCode, RefreshCw, Wifi, WifiOff, Copy, LogOut } from 'lucide-react';
 import toast from 'react-hot-toast';
@@ -14,6 +14,7 @@ export default function Dashboard() {
   const [newName, setNewName] = useState('');
   const [showCreate, setShowCreate] = useState(false);
   const [qrSession, setQrSession] = useState(null);
+  const [refreshingStatuses, setRefreshingStatuses] = useState({});
   const navigate = useNavigate();
 
   const load = useCallback(async () => {
@@ -27,11 +28,32 @@ export default function Dashboard() {
     }
   }, []);
 
+  const refreshStatuses = useCallback(async () => {
+    setRefreshingStatuses(prev => {
+      const newState = {};
+      sessions.forEach(s => { newState[s.id] = true; });
+      return { ...prev, ...newState };
+    });
+    try {
+      const data = await api.listSessions();
+      setSessions(data);
+    } catch (err) {
+      // silent fail for status refresh
+    } finally {
+      setRefreshingStatuses({});
+    }
+  }, [sessions]);
+
   useEffect(() => {
     load();
-    const interval = setInterval(load, 8000);
-    return () => clearInterval(interval);
   }, [load]);
+
+  useEffect(() => {
+    if (sessions.length > 0) {
+      const interval = setInterval(refreshStatuses, 8000);
+      return () => clearInterval(interval);
+    }
+  }, [sessions, refreshStatuses]);
 
   const handleCreate = async () => {
     if (!newName.trim()) { toast.error('Device name required'); return; }
@@ -193,7 +215,7 @@ export default function Dashboard() {
                       </button>
                     </div>
                   </div>
-                  <StatusBadge status={session.status} />
+                  <StatusBadge status={session.status} refreshing={refreshingStatuses[session.id]} />
                 </div>
 
                 {/* Meta */}

@@ -114,6 +114,15 @@ app.get('/health', {
   version: '1.0.0'
 }));
 
+// Catch-all for SPA (404 handler)
+app.setNotFoundHandler((request, reply) => {
+  const url = request.url.split('?')[0];
+  if (!url.startsWith('/auth') && !url.startsWith('/sessions') && !url.startsWith('/contacts') && !url.startsWith('/media/files')) {
+    return reply.sendFile('index.html');
+  }
+  reply.code(404).send({ message: `Route ${request.method}:${url} not found`, error: 'Not Found', statusCode: 404 });
+});
+
 // Start server
 const start = async () => {
   try {
