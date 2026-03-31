@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { ArrowLeft, Save, QrCode, Globe, RefreshCw, Trash2, Copy, LogOut } from 'lucide-react';
 import toast from 'react-hot-toast';
@@ -14,6 +14,8 @@ export default function DeviceDetail() {
   const [loading, setLoading] = useState(true);
   const [qrOpen, setQrOpen] = useState(false);
   const [activeTab, setActiveTab] = useState('webhook');
+  const [refreshing, setRefreshing] = useState(false);
+  const initRef = useRef(false);
 
   // Webhook form
   const [webhookUrl, setWebhookUrl] = useState('');
@@ -23,7 +25,7 @@ export default function DeviceDetail() {
   const [sendForm, setSendForm] = useState({ to: '', text: '' });
   const [sending, setSending] = useState(false);
 
-  const load = useCallback(async () => {
+  const loadInitial = useCallback(async () => {
     try {
       const data = await api.getSession(id);
       setSession(data);
@@ -36,11 +38,31 @@ export default function DeviceDetail() {
     }
   }, [id, navigate]);
 
+  const refreshStatus = useCallback(async () => {
+    setRefreshing(true);
+    try {
+      const data = await api.getSession(id);
+      setSession(prev => ({ ...prev, status: data.status, last_seen: data.last_seen }));
+    } catch (err) {
+      // silent fail for status refresh
+    } finally {
+      setRefreshing(false);
+    }
+  }, [id]);
+
   useEffect(() => {
-    load();
-    const interval = setInterval(load, 8000);
-    return () => clearInterval(interval);
-  }, [load]);
+    if (!initRef.current) {
+      initRef.current = true;
+      loadInitial();
+    }
+  }, [loadInitial]);
+
+  useEffect(() => {
+    if (!loading && initRef.current) {
+      const interval = setInterval(refreshStatus, 8000);
+      return () => clearInterval(interval);
+    }
+  }, [loading, refreshStatus]);
 
   const saveWebhook = async () => {
     if (!webhookUrl) { toast.error('URL required'); return; }
@@ -48,7 +70,7 @@ export default function DeviceDetail() {
     try {
       await api.setWebhook(id, webhookUrl);
       toast.success('Webhook saved');
-      load();
+      loadInitial();
     } catch (err) {
       toast.error(err.message);
     } finally {
@@ -77,7 +99,7 @@ export default function DeviceDetail() {
     try {
       await api.restartSession(id);
       toast.success('Restarting...');
-      setTimeout(load, 2000);
+      setTimeout(loadInitial, 2000);
     } catch (err) {
       toast.error(err.message);
     }
@@ -88,7 +110,7 @@ export default function DeviceDetail() {
     try {
       await api.disconnectSession(id);
       toast.success('Device disconnected');
-      setTimeout(load, 1000);
+      setTimeout(loadInitial, 1000);
     } catch (err) {
       toast.error(err.message);
     }
@@ -169,15 +191,15 @@ export default function DeviceDetail() {
       {qrOpen && (
         <QRModal
           sessionId={id}
-          onClose={() => { setQrOpen(false); load(); }}
-          onConnected={() => { setQrOpen(false); load(); }}
+          onClose={() => { setQrOpen(false); loadInitial(); }}
+          onConnected={() => { setQrOpen(false); loadInitial(); }}
         />
       )}
 
       {/* Status card */}
       <div className="bg-surface border border-border p-5 mb-6 flex items-center justify-between">
         <div className="flex items-center gap-4">
-          <StatusBadge status={session?.status} />
+          <StatusBadge status={session?.status} refreshing={refreshing} />
           <div>
             <p className="font-mono text-xs text-muted">Status</p>
             <p className="font-mono text-sm text-white capitalize">{session?.status}</p>

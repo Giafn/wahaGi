@@ -7,14 +7,18 @@ const STATUS_CONFIG = {
   disconnected: { label: 'Disconnected', color: 'text-muted',  bg: 'bg-subtle/50 border-border' },
 };
 
-export default function StatusBadge({ status }) {
+export default function StatusBadge({ status, refreshing }) {
   const cfg = STATUS_CONFIG[status] || STATUS_CONFIG.disconnected;
   return (
     <span className={clsx(
       'inline-flex items-center gap-1.5 px-2 py-0.5 border font-mono text-xs',
       cfg.color, cfg.bg
     )}>
-      <span className={`status-dot ${status}`} />
+      {refreshing ? (
+        <div className="w-2 h-2 border border-current border-t-transparent rounded-full animate-spin" />
+      ) : (
+        <span className={`status-dot ${status}`} />
+      )}
       {cfg.label}
     </span>
   );
