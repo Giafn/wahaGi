@@ -162,7 +162,7 @@ export async function downloadAndSaveMedia(msg, sessionId) {
   }
 }
 
-function getExtension(mimetype) {
+export function getExtension(mimetype) {
   const map = {
     'image/jpeg': 'jpg',
     'image/png': 'png',
@@ -180,3 +180,49 @@ function getExtension(mimetype) {
   };
   return map[mimetype] || 'bin';
 }
+
+export async function sendMedia(sessionId, lid, base64Data, mimetype, caption = null, fileName = null) {
+  const session = getSession(sessionId);
+  if (!session || session.status !== 'connected') {
+    throw new Error('Session not connected');
+  }
+
+  const jid = toJID(lid);
+  const buffer = Buffer.from(base64Data, 'base64');
+
+  let messageContent;
+  const mediaType = getMediaType(mimetype);
+
+  if (mediaType === 'image') {
+    messageContent = { image: buffer, caption };
+  } else if (mediaType === 'video') {
+    messageContent = { video: buffer, caption };
+  } else if (mediaType === 'audio') {
+    messageContent = { audio: buffer, mimetype };
+  } else {
+    messageContent = {
+      document: buffer,
+      mimetype,
+      fileName: fileName || `document.${getExtension(mimetype)}`,
+      caption
+    };
+  }
+
+  const result = await session.socket.sendMessage(jid, messageContent);
+
+  if (result?.key?.id) {
+    const messageText = caption || `[${mediaType} file]`;
+    await saveOutgoingMessage(sessionId, jid, messageText, mediaType, result.key.id, lid);
+  }
+
+  return result;
+}
+
+function getMediaType(mimetype) {
+  if (mimetype.startsWith('image/')) return 'image';
+  if (mimetype.startsWith('video/')) return 'video';
+  if (mimetype.startsWith('audio/')) return 'audio';
+  return 'document';
+}
+
+export { toJID };

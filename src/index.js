@@ -14,6 +14,7 @@ import { sessionRoutes } from './routes/sessions.js';
 import { messageRoutes } from './routes/messages.js';
 import { chatRoutes } from './routes/chats.js';
 import { contactRoutes } from './routes/contacts.js';
+import { broadcastRoutes } from './routes/broadcast.js';
 import { ensureDirectories } from './utils/fs.js';
 import { swaggerOptions, swaggerUIOptions } from './swagger.js';
 import { restoreAllSessions } from './services/sessionManager.js';
@@ -92,6 +93,7 @@ await app.register(sessionRoutes, { prefix: '/sessions' });
 await app.register(messageRoutes, { prefix: '/sessions' });
 await app.register(chatRoutes, { prefix: '/sessions' });
 await app.register(contactRoutes, { prefix: '/contacts' });
+await app.register(broadcastRoutes, { prefix: '/sessions' });
 
 // Health check
 app.get('/health', {
@@ -117,7 +119,7 @@ app.get('/health', {
 // Catch-all for SPA (404 handler)
 app.setNotFoundHandler((request, reply) => {
   const url = request.url.split('?')[0];
-  if (!url.startsWith('/auth') && !url.startsWith('/sessions') && !url.startsWith('/contacts') && !url.startsWith('/media/files')) {
+  if (!url.startsWith('/auth') && !url.startsWith('/sessions') && !url.startsWith('/contacts') && !url.startsWith('/media/files') && !url.startsWith('/docs')) {
     return reply.sendFile('index.html');
   }
   reply.code(404).send({ message: `Route ${request.method}:${url} not found`, error: 'Not Found', statusCode: 404 });

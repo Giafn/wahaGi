@@ -108,6 +108,5 @@ export const swaggerUIOptions = {
   uiConfig: {
     docExpansion: 'list',
     deepLinking: false
-  },
-  staticCSP: true
+  }
 };
