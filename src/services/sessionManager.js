@@ -264,7 +264,7 @@ async function _initSocket(sessionId, userId) {
       await saveChatHistoryWithLID(sessionId, jid, msg, msgType, lid);
 
       const payload = await buildWebhookPayload(msg, msgType, sessionId, lid, isFromMe);
-      log(`🔔 Dispatching webhook: event=${payload.event}, from=${payload.from}, from_me=${payload.from_me}, group_id=${payload.group_id}, type=${msgType}`);
+      log(`🔔 Dispatching webhook: event=${payload.event}, from=${payload.from}, from_me=${payload.from_me}, conversation_id=${payload.conversation_id}, type=${msgType}`);
       await dispatchWebhook(sessionId, payload);
     }
   });
@@ -501,7 +501,7 @@ async function buildWebhookPayload(msg, type, sessionId, lid, isFromMe = false) 
   const base = {
     event: isFromMe ? 'message.sent' : 'message.received',
     session_id: sessionId,
-    group_id: isGroup ? jid : null,
+    conversation_id: isGroup ? jid : lid,
     from: senderLid,
     from_me: isFromMe,
     is_group: isGroup,
